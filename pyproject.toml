@@ -1,0 +1,43 @@
+[project]
+name = "llemon"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Dan Gittik", email = "dan.gittik@gmail.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic (>=2.11.7,<3.0.0)",
+    "openai (>=1.98.0,<2.0.0)",
+    "google-genai (>=1.28.0,<2.0.0)",
+    "anthropic (>=0.60.0,<0.61.0)",
+    "dotenv (>=0.9.9,<0.10.0)",
+    "jinja2 (>=3.1.6,<4.0.0)"
+]
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^8.4.1"
+click = "^8.2.1"
+pytest-cov = "^6.2.1"
+black = "^25.1.0"
+isort = "^6.0.1"
+flake8 = "^7.3.0"
+mypy = "^1.17.0"
+poethepoet = "^0.36.0"
+dotenv = "^0.9.9"
+uvicorn = "^0.35.0"
+
+[tool.poe.tasks]
+run = "python dev.py run"
+clean = "python dev.py clean"
+test = "python dev.py test"
+cov = "python dev.py cov"
+lint = "python dev.py lint"
+type = "python dev.py type"
+make-migrations = "python dev.py make-migrations"
+migrate = "python dev.py migrate"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
