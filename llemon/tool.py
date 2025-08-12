@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-import concurrent.futures
+from concurrent.futures import ThreadPoolExecutor, Future, wait
 import json
 import inspect
 from functools import cached_property
+import logging
+import traceback
 from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 
 from pydantic import BaseModel, ConfigDict
 
 from .types import CallArgument, CallMessage, ToolsArgument, ToolSchema
 
+log = logging.getLogger(__name__)
 schemas: dict[Callable[..., Any], ToolSchema] = {}
 undefined = object()
 
@@ -46,125 +49,168 @@ class Tool:
             "__annotations__": annotations,
             "model_config": ConfigDict(extra='forbid')
         })
-        schema: ToolSchema = {
-            "name": self.name,
-            "description": self.description,
-            "parameters": model_class.model_json_schema(),
-        }
+        schema = ToolSchema(
+            name=self.name,
+            description=self.description,
+            parameters=model_class.model_json_schema(),
+        )
         schemas[self.function] = schema
         return schema
 
 
-class ToolSchema(Tool):
+class ToolRecord(Tool):
 
     def __init__(self, schema: ToolSchema) -> None:
-        self.schema = schema
-        self.name = schema["name"]
         self.function = self._not_runnable
+        self.name = schema["name"]
+        self.description = schema["description"]
+        self.schema = schema
     
     def _not_runnable(self, *args, **kwargs: Any) -> NoReturn:
-        raise RuntimeError(f"{self} only contains a schema and isn't directly runnable")
+        raise RuntimeError(f"{self} is not associated with a runnable function")
 
 
 class Call:
 
-    executor: ClassVar[concurrent.futures.Executor | None] = None
+    executor: ClassVar[ThreadPoolExecutor | None] = None
 
-    def __init__(self, id: str, tool: Tool, arguments: str | dict[str, Any], return_value: Any = undefined) -> None:
+    def __init__(
+        self,
+        id: str,
+        tool: Tool,
+        arguments: dict[str, Any],
+        return_value: Any = undefined,
+        error: str | None = None,
+    ) -> None:
         self.id = id
         self.tool = tool
-        if isinstance(arguments, str):
-            self.arguments_json = arguments
-            self.arguments = json.loads(arguments)
-        else:
-            self.arguments_json = json.dumps(arguments)
-            self.arguments = arguments
+        self.arguments = arguments
         self._return_value = return_value
+        self._error = error
     
     def __str__(self) -> str:
-        output = f"call {self.id!r}: {self.tool.name}({self.arguments_json!r})"
+        output = [self.name]
         if self._return_value is not undefined:
-            output += f" -> {self.return_value_string}"
-        return output
+            output.append(f" -> {self._return_value}")
+        elif self._error is not None:
+            output.append(f" -> {self._error!r}")
+        return "".join(output)
     
     def __repr__(self) -> str:
         return f"<{self}>"
     
     @classmethod
-    def get_executor(cls) -> concurrent.futures.Executor:
+    def get_executor(cls) -> ThreadPoolExecutor:
         if cls.executor is None:
-            cls.executor = concurrent.futures.ThreadPoolExecutor()
+            cls.executor = ThreadPoolExecutor()
         return cls.executor
     
     @classmethod
     def resolve(cls, call: CallArgument) -> Call:
         if isinstance(call, Call):
             return call
-        try:
-            return_value = json.loads(call["return_value"])
-        except json.JSONDecodeError:
-            return_value = call["return_value"]
+        result = json.loads(call["result"])
+        return_value = result.get("return_value", undefined)
+        error = result.get("error")
         return cls(
             id=call["id"],
-            tool=ToolSchema(call["tool"]),
+            tool=ToolRecord(call["tool"]),
             arguments_json=call["arguments"],
             return_value=return_value,
+            error=error,
         )
     
     @classmethod
     def run_all(cls, calls: list[Call]) -> None:
         executor = cls.get_executor()
-        futures: list[concurrent.futures.Future[Any]] = []
+        futures: list[Future[Any]] = []
         for call in calls:
             future = executor.submit(call.run)
             futures.append(future)
-        concurrent.futures.wait(futures)
+        wait(futures)
 
     @classmethod
     async def async_run_all(cls, calls: list[Call]) -> None:
         tasks = [asyncio.create_task(call.async_run()) for call in calls]
         await asyncio.gather(*tasks, return_exceptions=True)
+    
+    @cached_property
+    def name(self) -> str:
+        return f"call {self.id!r}: {self.tool.name}({self.arguments_json!r})"
+    
+    @cached_property
+    def arguments_json(self) -> str:
+        return json.dumps(self.arguments)
 
     @cached_property
     def return_value(self) -> Any:
+        if self._error:
+            raise self._error
         if self._return_value is undefined:
             raise self._didnt_run()
         return self._return_value
     
     @cached_property
-    def return_value_string(self) -> str:
-        if isinstance(self.return_value, BaseModel):
-            return self.return_value.model_dump_json()
-        try:
-            return json.dumps(self.return_value)
-        except TypeError:
-            return str(self.return_value)
+    def error(self) -> str | None:
+        if not self._error and self._return_value is undefined:
+            raise self._didnt_run()
+        return self._error
+    
+    @cached_property
+    def result(self) -> dict[str, Any]:
+        if self._error:
+            return {"error": self.error}
+        elif self._return_value is undefined:
+            raise self._didnt_run()
+        return {"return_value": self.return_value}
+    
+    @cached_property
+    def result_json(self) -> str:
+        result: dict[str, Any] = {}
+        if self._error:
+            result["error"] = self._error
+        else:
+            if isinstance(self.return_value, BaseModel):
+                return_value = self.return_value.model_dump_json()
+            try:
+                return_value = json.dumps(self.return_value)
+            except TypeError:
+                return_value = str(self.return_value)
+            result["return_value"] = return_value
+        return json.dumps(result)
 
     def run(self) -> None:
+        log.debug("running %s", self.name)
         try:
-            output = self.tool.function(**self.arguments)
-            self._return_value = output
+            self._return_value = self.tool.function(**self.arguments)
+            log.debug("%s returned %r", self.name, self._return_value)
         except Exception as error:
-            self._return_value = {"error": str(error)}
+            self._error = self._format_error(error)
+            log.debug("%s raised %r", self.name, self._error)
 
     async def async_run(self) -> None:
+        log.debug("running %s", self.name)
         try:
             if inspect.iscoroutinefunction(self.tool.function):
-                output = await self.tool.function(**self.arguments)
+                return_value = await self.tool.function(**self.arguments)
             else:
-                output = await asyncio.to_thread(self.tool.function, **self.arguments)
-            self._return_value = output
+                return_value = await asyncio.to_thread(self.tool.function, **self.arguments)
+            log.debug("%s returned %r", self.name, return_value)
+            self._return_value = return_value
         except Exception as error:
-            self._return_value = {"error": str(error)}
+            self._error = self._format_error(error)
+            log.debug("%s raised %r", self.name, self._error)
     
     def to_message(self) -> CallMessage:
-        return {
-            "role": "call",
-            "id": self.id,
-            "tool": self.tool.schema,
-            "arguments": self.arguments_json,
-            "return_value": self.return_value_string,
-        }
+        return CallMessage(
+            id=self.id,
+            tool=self.tool.schema,
+            arguments=self.arguments_json,
+            result=self.result_json,
+        )
 
     def _didnt_run(self) -> RuntimeError:
         return RuntimeError(f"{self} didn't run yet")
+
+    def _format_error(self, error: Exception) -> str:
+        return "".join(traceback.format_exception(error.__class__, error, error.__traceback__))

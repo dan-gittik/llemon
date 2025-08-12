@@ -2,9 +2,11 @@ from enum import Enum
 from functools import reduce
 import operator
 from types import UnionType
-from typing import Any, Annotated, Iterable, overload
+from typing import Any, Annotated, overload
 
 from pydantic import BaseModel, Field
+
+from .utils import concat
 
 UNSUPPORTED_KEYS = [
     "const",
@@ -309,14 +311,3 @@ def check_not_defined(path: str, schema: dict[str, Any], reason: str, keys: list
     for key in keys:
         if key in schema:
             raise ValueError(f"{path} can't define both {reason} and {key}")
-
-
-def concat(iterable: Iterable[Any]) -> str:
-    items = list(iterable)
-    if not items:
-        return "<none>"
-    if len(items) == 1:
-        return str(items[0])
-    if len(items) == 2:
-        return f"{items[0]} or {items[1]}"
-    return ", ".join(map(str, items[:-1])) + f" or {items[-1]}"

@@ -1,56 +1,42 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, AsyncGenerator, ClassVar, Iterator, Literal, Self, overload
+from contextlib import asynccontextmanager
+import json
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, AsyncIterator, Iterator, Self, overload, cast
 
-import jinja2
 from pydantic import BaseModel
 
 from .interaction import History, Interaction
-from .requests import CompletionRequest, ClassificationRequest
+from .formatting import Formatting
+from .protocol import Completion, Classification, Stream, StructuredOutput, LLMOperation
 from .schema import schema_to_model
 from .tool import Tool
-from .types import FormattingArgument, FilesArgument, Messages, ToolsArgument
+from .types import FormattingArgument, FilesArgument, HistoryArgument, Messages, SystemMessage, ToolsArgument
 from .utils import now
 
 if TYPE_CHECKING:
-    from .llm import LLM
-    from .model import Model
-
-# TODO easily extend env
+    from .llm import LLM, LLMModel
 
 
 class Conversation:
 
-    _env: jinja2.Environment | None
-
     def __init__(
         self,
-        model: Model,
+        model: LLMModel,
         prompt: str,
         context: dict[str, Any] | None = None,
-        tools: ToolsArgument = None,
         history: History | None = None,
-        formatting: FormattingArgument = True,
+        tools: ToolsArgument = None,
+        formatting: FormattingArgument = None,
     ) -> None:
-        if context is None:
-            context = {}
         self.model = model
         self.prompt = prompt
-        self.context = context
-        self.tools = Tool.resolve(tools)
+        self.context = context if context is not None else {}
         self.history = history or History()
+        self.tools = Tool.resolve(tools)
         self.formatting = Formatting.resolve(formatting)
-        if self.formatting:
-            self._env = jinja2.Environment(
-                variable_start_string=self.formatting.variable_start,
-                variable_end_string=self.formatting.variable_end,
-                block_start_string=self.formatting.block_start,
-                block_end_string=self.formatting.block_end,
-                comment_start_string=self.formatting.comment_start,
-                comment_end_string=self.formatting.comment_end,
-            )
-        else:
-            self._env = None
+        self._state: dict[str, Any] = {}
     
     def __bool__(self) -> bool:
         return bool(self.history)
@@ -72,18 +58,29 @@ class Conversation:
             return self.replace(history=self.history[index])
         return self.history[index]
     
+    def __aenter__(self) -> Self:
+        return self
+    
+    async def __aexit__(
+        self,
+        exception: type[BaseException] | None,
+        error: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await self.finish()
+    
     @property
     def llm(self) -> LLM:
         return self.model.llm
 
     def replace(
         self,
-        model: Model | None = None,
+        model: LLMModel | None = None,
         prompt: str | None = None,
         context: dict[str, Any] | None = None,
-        history: History | None = None,
-        tools: ToolsArgument | None = None,
-        formatting: FormattingArgument | None = None,
+        history: HistoryArgument = None,
+        tools: ToolsArgument = None,
+        formatting: FormattingArgument = None,
     ) -> Self:
         return type(self)(
             model=model or self.model,
@@ -100,8 +97,11 @@ class Conversation:
         else:
             prompt = self.prompt
         messages = self.history.to_messages()
-        messages.insert(0, {"role": "system", "content": prompt})
+        messages.insert(0, SystemMessage(content=prompt))
         return messages
+    
+    async def finish(self) -> None:
+        await self.llm.teardown(self._state)
     
     async def complete(
         self,
@@ -112,6 +112,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
@@ -122,10 +123,12 @@ class Conversation:
         stop: list[str] | None = None,
         prediction: str | None = None,
     ) -> str:
-        request = CompletionRequest(
-            model=self.model.name,
-            system_prompt=self._format(self.prompt, context),
+        completion = Completion(
+            model=self.model,
+            system_prompt=self.prompt,
             user_message=message,
+            context=self.context | (context or {}),
+            formatting=formatting or self.formatting,
             history=self.history,
             files=files,
             tools=self.tools | Tool.resolve(tools),
@@ -140,13 +143,9 @@ class Conversation:
             stop=stop,
             prediction=prediction,
         )
-        interaction = Interaction(request.user_content, request.files)
-        response = await self.llm.complete(request)
-        content = response.contents[0]
-        if save:
-            interaction.end(content, response.calls)
-            self.history.append(interaction)
-        return content
+        async with self._interaction(completion, save=save):
+            await self.llm.complete(completion)
+        return completion.text
     
     async def stream(
         self,
@@ -157,6 +156,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
@@ -166,11 +166,13 @@ class Conversation:
         top_k: float | None = None,
         stop: list[str] | None = None,
         prediction: str | None = None,
-    ) -> AsyncGenerator[str, None]:
-        request = CompletionRequest(
-            model=self.model.name,
-            system_prompt=self._format(self.prompt, context),
+    ) -> AsyncIterator[str]:
+        stream = Stream(
+            model=self.model,
+            system_prompt=self.prompt,
             user_message=message,
+            context=self.context | (context or {}),
+            formatting=formatting or self.formatting,
             history=self.history,
             files=files,
             tools=self.tools | Tool.resolve(tools),
@@ -185,16 +187,10 @@ class Conversation:
             stop=stop,
             prediction=prediction,
         )
-        interaction = Interaction(request.user_content, request.files)
-        ttft: float | None = None
-        response = await self.llm.stream(request)
-        async for chunk in response:
-            if ttft is None:
-                ttft = (now() - interaction.started).total_seconds()
-            yield chunk
-        if save:
-            interaction.end(response.output, response.calls, ttft)
-            self.history.append(interaction)
+        async with self._interaction(stream, save=save):
+            await self.llm.stream(stream)
+            async for chunk in stream:
+                yield chunk
     
     @overload
     async def construct(
@@ -207,6 +203,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
         temperature: float | None = None,
         seed: int | None = None,
         frequency_penalty: float | None = None,
@@ -227,6 +224,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
         temperature: float | None = None,
         seed: int | None = None,
         frequency_penalty: float | None = None,
@@ -246,6 +244,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
         temperature: float | None = None,
         seed: int | None = None,
         frequency_penalty: float | None = None,
@@ -255,13 +254,18 @@ class Conversation:
         prediction: T | dict[str, Any] | None = None,
     ) -> T | dict[str, Any]:
         if isinstance(schema, dict):
-            model_class = schema_to_model(schema)
+            model_class = cast(type[T], schema_to_model(schema))
+            return_model = False
         else:
             model_class = schema
-        request = CompletionRequest(
-            model=self.model.name,
-            system_prompt=self._format(self.prompt, context),
+            return_model = True
+        structured_output = StructuredOutput(
+            model=self.model,
+            schema=model_class,
+            system_prompt=self.prompt,
             user_message=message,
+            context=self.context | (context or {}),
+            formatting=formatting or self.formatting,
             history=self.history,
             files=files,
             tools=self.tools | Tool.resolve(tools),
@@ -274,15 +278,11 @@ class Conversation:
             top_k=top_k,
             prediction=prediction,
         )
-        interaction = Interaction(request.user_content, request.files)
-        response = await self.llm.construct(model_class, request)
-        output = response.outputs[0]
-        if save:
-            interaction.end(output.model_dump_json(), response.calls)
-            self.history.append(interaction)
-        if isinstance(schema, dict):
-            return output.model_dump()
-        return output  # type: ignore
+        async with self._interaction(structured_output, save=save):
+            await self.llm.construct(structured_output)
+        if return_model:
+            return structured_output.object
+        return structured_output.dict
 
     async def classify(
         self,
@@ -295,66 +295,41 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        formatting: FormattingArgument = None,
     ) -> str:
-        request = ClassificationRequest(
-            model=self.model.name,
+        classification = Classification(
+            model=self.model,
             question=question,
             answers=answers,
             user_message=message,
+            context=self.context | (context or {}),
+            formatting=formatting or self.formatting,
             history=self.history,
             files=files,
             tools=self.tools | Tool.resolve(tools),
             use_tool=use_tool,
         )
-        interaction = Interaction(request.user_content, request.files)
-        response = await self.llm.classify(request)
-        if save:
-            interaction.end(response.answer, response.calls)
-            self.history.append(interaction)
-        return response.answer
+        async with self._interaction(classification, save=save):
+            await self.llm.classify(classification)
+        return classification.answer
     
-    def _format(self, text: str, context: dict[str, Any] | None = None) -> str:
-        if not self._env:
-            return text
-        template = self._env.from_string(text)
-        return template.render(self.context | (context or {}))
-    
-
-class Formatting(BaseModel):
-    variable_start: str = "{{"
-    variable_end: str = "}}"
-    block_start: str = "{%"
-    block_end: str = "%}"
-    comment_start: str = "{#"
-    comment_end: str = "#}"
-
-    brackets: ClassVar[dict[str, str]] = {
-        "(": ")",
-        "[": "]",
-        "{": "}",
-        "<": ">",
-    }
-
-    @classmethod
-    def resolve(cls, formatting: FormattingArgument) -> Formatting | Literal[False]:
-        if formatting is False:
-            return False
-        if formatting is True:
-            return cls()
-        if isinstance(formatting, str):
-            return cls.from_bracket(formatting)
-        return formatting
-
-    @classmethod
-    def from_bracket(self, start: str) -> Formatting:
-        if start not in self.brackets:
-            raise ValueError(f"Invalid bracket {start!r} (expected '(', '{{', '[' or '<')")
-        end = self.brackets[start]
-        return self(
-            variable_start=start * 2,
-            variable_end=end * 2,
-            block_start=f"{start}%",
-            block_end=f"%{end}",
-            comment_start=f"{start}#",
-            comment_end=f"#{end}",
-        )
+    @asynccontextmanager
+    async def _interaction(self, operation: LLMOperation, save: bool) -> AsyncIterator[None]:
+        interaction = Interaction(operation.user_content, operation.files)
+        await self.llm.setup(operation, self._state)
+        yield
+        if not save:
+            return
+        ttft: float | None = None
+        match operation:
+            case Stream():
+                assistant = operation.text
+                ttft = operation.ttft
+            case StructuredOutput():
+                assistant = json.dumps(operation.dict)
+            case Classification():
+                assistant = operation.answer
+            case Completion():
+                assistant = operation.text
+        interaction.end(assistant, operation.calls, ttft)
+        self.history.append(interaction)

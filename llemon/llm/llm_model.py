@@ -1,32 +1,29 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+import logging
 from typing import TYPE_CHECKING, Any, AsyncIterator, cast, overload
 
 from pydantic import BaseModel
 
-from .conversation import Conversation
-from .requests import ClassificationRequest, CompletionRequest
-from .schema import schema_to_model
-from .types import FilesArgument, HistoryArgument, ToolsArgument, FormattingArgument
+from ..conversation import Conversation
+from ..protocol import Classification, Completion, LLMOperation, Stream, StructuredOutput
+from ..schema import schema_to_model
+from ..types import FilesArgument, HistoryArgument, ToolsArgument, FormattingArgument
+from .model_config import LLMModelConfig
 
 if TYPE_CHECKING:
     from .llm import LLM
 
-
-class ModelGetter:
-
-    def __init__(self, name: str) -> None:
-        self.name = name
-    
-    def __get__(self, instance: LLM, owner: type[LLM]) -> Model:
-        return owner.get(self.name)
+log = logging.getLogger(__name__)
 
 
-class Model:
+class LLMModel:
 
-    def __init__(self, llm: LLM, name: str) -> None:
+    def __init__(self, llm: LLM, name: str, config: LLMModelConfig) -> None:
         self.llm = llm
         self.name = name
+        self.config = config
     
     def __str__(self) -> str:
         return f"{self.llm} {self.name!r}"
@@ -51,6 +48,7 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: None,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
@@ -58,7 +56,6 @@ class Model:
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
-        n: None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -74,6 +71,7 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: int,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
@@ -81,7 +79,6 @@ class Model:
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
-        n: int,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -96,6 +93,7 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: int | None = None,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
@@ -103,7 +101,6 @@ class Model:
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
-        n: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -112,8 +109,8 @@ class Model:
         prediction: str | None = None,
     ) -> str | list[str]:
         system_prompt, user_message = self._resolve_messages(message1, message2)
-        request = CompletionRequest(
-            model=self.name,
+        completion = Completion(
+            model=self,
             user_message=user_message,
             system_prompt=system_prompt,
             history=history,
@@ -125,16 +122,18 @@ class Model:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
-            n=n,
+            num_responses=num_responses,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
             prediction=prediction,
         )
-        response = await self.llm.complete(request)
-        if n is None:
-            return response.contents[0]
-        return response.contents
+        log.debug("completing %s", completion)
+        async with self._operation(completion):
+            await self.llm.complete(completion)
+        if num_responses is None:
+            return completion.text
+        return completion.texts
 
     async def stream(
         self,
@@ -157,8 +156,8 @@ class Model:
         prediction: str | None = None,
     ) -> AsyncIterator[str]:
         system_prompt, user_message = self._resolve_messages(message1, message2)
-        request = CompletionRequest(
-            model=self.name,
+        stream = Stream(
+            model=self,
             user_message=user_message,
             system_prompt=system_prompt,
             history=history,
@@ -175,9 +174,11 @@ class Model:
             stop=stop,
             prediction=prediction
         )
-        response = await self.llm.stream(request)
-        async for chunk in response:
-            yield chunk
+        log.debug("streaming %s", stream)
+        async with self._operation(stream):
+            await self.llm.stream(stream)
+            async for chunk in stream:
+                yield chunk
     
     @overload
     async def construct(
@@ -187,13 +188,13 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: None,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
-        n: None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -209,13 +210,13 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: None,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
-        n: None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -231,13 +232,13 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: int,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
-        n: int,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -253,13 +254,13 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: int,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
-        n: int,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -273,13 +274,13 @@ class Model:
         message2: str | None = None,
         /,
         *,
+        num_responses: int | None = None,
         history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         temperature: float | None = None,
         seed: int | None = None,
-        n: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
         top_p: float | None = None,
@@ -287,20 +288,22 @@ class Model:
         prediction: T | dict[str, Any] | None = None,
     ) -> T | dict[str, Any] | list[T] | list[dict[str, Any]]:
         if isinstance(schema, dict):
-            model_class = schema_to_model(schema)
+            model_class = cast(type[T], schema_to_model(schema))
             return_model = False
         else:
             model_class = schema
             return_model = True
         system_prompt, user_message = self._resolve_messages(message1, message2)
-        request = CompletionRequest(
-            model=self.name,
+        structured_output = StructuredOutput(
+            model=self,
+            schema=model_class,
             user_message=user_message,
             system_prompt=system_prompt,
             history=history,
             files=files,
             temperature=temperature,
             seed=seed,
+            num_responses=num_responses,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
             top_p=top_p,
@@ -309,14 +312,20 @@ class Model:
             use_tool=use_tool,
             prediction=prediction,
         )
-        response = await self.llm.construct(model_class, request)
-        if n is None:
+        log.debug("generating structured output %s", structured_output)
+        async with self._operation(structured_output):
+            await self.llm.construct(structured_output)
+        if num_responses is None:
             if return_model:
-                return cast(T, response.outputs[0])
-            return response.outputs[0].model_dump()
+                log.debug("returning single %s", model_class.__name__)
+                return structured_output.object
+            log.debug("returning single dict")
+            return structured_output.dict
         if return_model:
-            return cast(list[T], response.outputs)
-        return [output.model_dump() for output in response.outputs]
+            log.debug("returning list of %s", model_class.__name__)
+            return structured_output.objects
+        log.debug("returning list of dicts")
+        return structured_output.dicts
 
     async def classify(
         self,
@@ -329,8 +338,8 @@ class Model:
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
     ) -> str:
-        request = ClassificationRequest(
-            model=self.name,
+        classification = Classification(
+            model=self,
             user_message=message,
             question=question,
             answers=answers,
@@ -339,10 +348,30 @@ class Model:
             tools=tools,
             use_tool=use_tool,
         )
-        response = await self.llm.classify(request)
-        return response.answer
+        log.debug("classifying %s", classification)
+        async with self._operation(classification):
+            await self.llm.classify(classification)
+        return classification.answer
 
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:
             return None, message1
         return message1, message2
+    
+    @asynccontextmanager
+    async def _operation(self, operation: LLMOperation) -> AsyncIterator[None]:
+        state = {}
+        await self.llm.setup(operation, state)
+        try:
+            yield
+        finally:
+            await self.llm.teardown(state)
+
+
+class LLMModelGetter:
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+    
+    def __get__(self, instance: LLM, owner: type[LLM]) -> LLMModel:
+        return owner.get(self.name)

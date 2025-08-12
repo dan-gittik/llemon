@@ -8,7 +8,7 @@ from typing import Iterator, Self, overload
 from .file import File
 from .tool import Call
 from .utils import now
-from .types import InteractionArgument, HistoryArgument, Messages, UserMessage
+from .types import InteractionArgument, HistoryArgument, Messages, UserMessage, AssistantMessage, CallMessage
 
 SPACES = re.compile(r"\s+")
 
@@ -48,7 +48,7 @@ class Interaction:
         if isinstance(interaction, Interaction):
             return interaction
         user, *calls, assistant = interaction
-        files = [File.from_url(url, name=name) for name, url in user.get("files", {}).items()]
+        files = [File.from_dict(dict_) for dict_ in user.get("files", [])]
         return cls(user["content"], files, assistant["content"], [Call.resolve(call) for call in calls])
     
     @cached_property
@@ -90,13 +90,14 @@ class Interaction:
     
     def to_messages(self) -> Messages:
         messages: Messages = []
-        user_message: UserMessage = {"role": "user", "content": self.user}
+        user_message = UserMessage(content=self.user)
         if self.files:
-            user_message["files"] = {file.name: file.url for file in self.files}
+            for file in self.files:
+                user_message.files.append(file.to_dict())
         messages.append(user_message)
         for call in self.calls:
             messages.append(call.to_message())
-        messages.append({"role": "assistant", "content": self.assistant})
+        messages.append(AssistantMessage(content=self.assistant))
         return messages
     
     def _didnt_complete(self) -> RuntimeError:

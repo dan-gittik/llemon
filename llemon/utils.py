@@ -1,17 +1,40 @@
+import asyncio
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
 import re
-from typing import Iterator
+from typing import Any, Callable, Iterable
 
 LEADING_EMPTY_LINES = re.compile(r"^([ \t]*\r?\n)+")
 INDENT_AND_CONTENT = re.compile(r"^(\s*)(.*)$", flags=re.DOTALL)
+
+executor: ThreadPoolExecutor | None = None
 
 
 class Error(Exception):
     pass
 
 
+class SetupError(Error):
+    pass
+
+
+class UnsupportedError(Error):
+    pass
+
+
 def now() -> dt.datetime:
     return dt.datetime.now(dt.UTC)
+
+
+def concat(iterable: Iterable[Any], conjunction: str = "or") -> str:
+    items = list(iterable)
+    if not items:
+        return "<none>"
+    if len(items) == 1:
+        return str(items[0])
+    if len(items) == 2:
+        return f"{items[0]} {conjunction} {items[1]}"
+    return ", ".join(map(str, items[:-1])) + f" {conjunction} {items[-1]}"
 
 
 def split_indent(text: str) -> tuple[int, str]:
@@ -47,3 +70,42 @@ def trim(text: str) -> str:
         line = line[indent:]
         output.append(line)
     return "\n".join(output)
+
+
+async def async_parallelize(calls: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]]) -> list[Any]:
+    tasks = [asyncio.create_task(call(*args, **kwargs)) for call, args, kwargs in calls]
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    errors: list[Exception] = []
+    failed: list[str] = []
+    for result, (call, args, kwargs) in zip(results, calls):
+        if isinstance(result, Exception):
+            errors.append(result)
+            params = ", ".join([str(arg) for arg in args] + [f"{key}={value!r}" for key, value in kwargs.items()])
+            failed.append(f"{call.__name__}({params})")
+    if errors:
+        raise ExceptionGroup(f"failed to run {concat(failed, 'and')}", errors)
+    return results
+
+
+async def parallelize(calls: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]]) -> list[Any]:
+    if executor is None:
+        executor = ThreadPoolExecutor()
+    futures: list[Future[Any]] = []
+    for call, args, kwargs in calls:
+        future = executor.submit(call, *args, **kwargs)
+        futures.append(future)
+    wait(futures)
+    results: list[Any] = []
+    errors: list[Exception] = []
+    failed: list[str] = []
+    for future, (call, args, kwargs) in zip(futures, calls):
+        try:
+            result = future.result()
+            results.append(result)
+        except Exception as error:
+            errors.append(error)
+            params = ", ".join([str(arg) for arg in args] + [f"{key}={value!r}" for key, value in kwargs.items()])
+            failed.append(f"{call.__name__}({params})")
+    if errors:
+        raise ExceptionGroup(f"failed to run {concat(failed, 'and')}", errors)
+    return results

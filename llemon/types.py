@@ -7,6 +7,7 @@ if TYPE_CHECKING:
     from .conversation import Formatting
     from .interaction import History, Interaction
     from .file import File
+    from .protocol import LLMOperation
     from .tool import Call, Tool
 
 
@@ -15,23 +16,24 @@ type ToolsArgument = list[Callable[..., Any]] | dict[str, Tool] | None
 type CallArgument = dict[str, Any] | Call
 type InteractionArgument = list[dict[str, Any]] | Interaction
 type HistoryArgument = list[dict[str, Any]] | History | None
-type FormattingArgument = bool | str | Formatting
+type FormattingArgument = bool | str | Formatting | None
 type Messages = list[SystemMessage | UserMessage | AssistantMessage | CallMessage]
+type Preprocessor = Callable[[LLMOperation], None]
 
 
 class SystemMessage(TypedDict):
-    role: Literal["system"]
+    role: Literal["system"] = "system"
     content: str
 
 
 class UserMessage(TypedDict, total=False):
-    role: Literal["user"]
+    role: Literal["user"] = "user"
     content: str
     files: dict[str, str]
 
 
 class AssistantMessage(TypedDict):
-    role: Literal["assistant"]
+    role: Literal["assistant"] = "assistant"
     content: str
 
 
@@ -42,7 +44,7 @@ class ToolSchema(TypedDict):
 
 
 class CallMessage(TypedDict):
-    role: Literal["call"]
+    role: Literal["call"] = "call"
     id: str
     tool: ToolSchema
     arguments: str

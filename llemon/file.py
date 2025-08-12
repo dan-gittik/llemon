@@ -2,21 +2,36 @@ from __future__ import annotations
 
 import base64
 from functools import cached_property
+import hashlib
+import logging
 import mimetypes
 import pathlib
-from typing import Self
+import re
+from typing import Any, Self
 
 import httpx
 
 from .types import FilesArgument
 
+DATA_URL_PATTERN = re.compile(r"^data:([^;]+);base64,(.*)$")
+
+log = logging.getLogger(__name__)
+
 
 class File:
 
-    def __init__(self, name: str, mimetype: str, data: bytes | None = None, url: str | None = None) -> None:
+    def __init__(
+        self,
+        name: str,
+        mimetype: str,
+        data: bytes | None = None,
+        url: str | None = None,
+        id: str | None = None,
+    ) -> None:
         self.name = name
         self.mimetype = mimetype
         self.data = data
+        self.id = id
         self._url = url
     
     def __str__(self) -> str:
@@ -52,13 +67,24 @@ class File:
         if not mimetype:
             raise ValueError(f"unknown mimetype for {path}")
         return mimetype
+    
+    @classmethod
+    def from_dict(cls, dict_: dict[str, Any]) -> Self:
+        return cls.from_url(dict_["url"], name=dict_["name"], id=dict_.get("id"))
 
     @classmethod
-    def from_url(cls, url: str, name: str | None = None) -> Self:
+    def from_url(cls, url: str, name: str | None = None, id: str | None = None) -> Self:
         if name is None:
             name = url
-        mimetype = cls.get_mimetype(url)
-        return cls(name, mimetype, url=url)
+        if match := DATA_URL_PATTERN.match(url):
+            mimetype, base64 = match.groups()
+            file = cls(name, mimetype, base64.b64decode(base64), url=url, id=id)
+            log.debug("created %s from data URL", file)
+        else:
+            mimetype = cls.get_mimetype(url)
+            file = cls(name, mimetype, url=url, id=id)
+            log.debug("created %s from URL %s", name, url)
+        return file
     
     @classmethod
     def from_path(cls, path: str | pathlib.Path) -> Self:
@@ -68,7 +94,9 @@ class File:
         if not path.is_file():
             raise IsADirectoryError(f"file {path} is a directory")
         mimetype = cls.get_mimetype(str(path))
-        return cls(path.name, mimetype, path.read_bytes())
+        file = cls(path.name, mimetype, path.read_bytes())
+        log.debug("created %s from path %s", file, path)
+        return file
     
     @classmethod
     def from_data(cls, name_or_mimetype: str, data: bytes) -> Self:
@@ -81,12 +109,21 @@ class File:
         else:
             name = name_or_mimetype
             mimetype = cls.get_mimetype(name)
-        return cls(name, mimetype, data)
+        file = cls(name, mimetype, data)
+        log.debug("created %s from data", file)
+        return file
+    
+    @cached_property
+    def md5(self) -> str:
+        if not self.data:
+            raise ValueError("file doesn't have data")
+        return hashlib.md5(self.data).hexdigest()
     
     @cached_property
     def base64(self) -> str:
         if not self.data:
             raise ValueError("file doesn't have data")
+        log.debug("encoding %s data as base64", self.name)
         return base64.b64encode(self.data).decode()
     
     @cached_property
@@ -97,9 +134,29 @@ class File:
             raise ValueError("file has neither data nor URL")
         return f"data:{self.mimetype};base64,{self.base64}"
     
+    @property
+    def is_image(self) -> bool:
+        return self.mimetype.startswith("image/")
+    
+    @property
+    def is_audio(self) -> bool:
+        return self.mimetype.startswith("audio/")
+    
+    @property
+    def is_video(self) -> bool:
+        return self.mimetype.startswith("video/")
+    
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "url": self.url,
+            "id": self.id,
+        }
+    
     async def fetch(self) -> None:
         if self.data:
             return
+        log.debug("fetching %s data from %s", self, self.url)
         async with httpx.AsyncClient() as client:
             response = await client.get(self.url)
             self.data = response.content

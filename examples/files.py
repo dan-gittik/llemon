@@ -1,9 +1,13 @@
 import asyncio
-from llemon import OpenAI, Gemini, Anthropic, Model
+import logging
+
+from llemon import OpenAI, Gemini, Anthropic, LLMModel
+
+logging.basicConfig(level=logging.DEBUG)
 
 
 async def main():
-    models: list[Model] = [OpenAI.gpt_4o, Anthropic.sonnet4, Gemini.pro25]
+    models: list[LLMModel] = [OpenAI.gpt5_nano, Anthropic.haiku3, Gemini.lite2]
     for model in models:
         print(model)
         conv = model("""

@@ -27,6 +27,7 @@ mypy = "^1.17.0"
 poethepoet = "^0.36.0"
 dotenv = "^0.9.9"
 uvicorn = "^0.35.0"
+pytest-asyncio = "^1.1.0"
 
 [tool.poe.tasks]
 run = "python dev.py run"

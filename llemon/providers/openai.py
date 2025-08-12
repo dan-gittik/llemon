@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, Iterator, Literal, cast, overload
+import json
+import logging
+from typing import Any, Iterator, Literal, cast, overload
 
 import openai
 from openai.types.chat import (
@@ -9,87 +11,143 @@ from openai.types.chat import (
     ChatCompletionSystemMessageParam,
     ChatCompletionUserMessageParam,
     ChatCompletionToolMessageParam,
-    ChatCompletionMessage,
+    ChatCompletionMessageToolCall,
     ChatCompletion,
     ChatCompletionNamedToolChoiceParam,
     ChatCompletionToolParam,
     ParsedChatCompletion,
     ParsedChoice,
 )
+from openai.types.shared_params import FunctionDefinition
 from openai.types.chat.chat_completion import Choice
+from openai.types.chat.chat_completion_content_part_param import (
+    ChatCompletionContentPartTextParam,
+    ChatCompletionContentPartImageParam,
+    File as ChatcompletionContentPartFileParam,
+)
 from pydantic import BaseModel
 
 from ..file import File
-from ..llm import LLM
-from ..model import ModelGetter
-from ..requests import Call, CompletionRequest, CompletionResponse, Request, Response, StructuredOutputResponse
-from ..utils import Error
+from ..llm import LLM, LLMModelGetter
+from ..protocol import Call, Completion, LLMOperation, StructuredOutput
+from ..utils import Error, async_parallelize
+
+FILE_IDS = "openai.file_ids"
+FILE_HASHES = "openai.file_hashes"
+
+log = logging.getLogger(__name__)
 
 
 class OpenAI(LLM):
 
-    no_content: ClassVar[str] = "."
-
-    # models
-    gpt_4o = ModelGetter("gpt-4o")
-    # /models
+    gpt5 = LLMModelGetter("gpt-5")
+    gpt5_mini = LLMModelGetter("gpt-5-mini")
+    gpt5_nano = LLMModelGetter("gpt-5-nano")
+    gpt41 = LLMModelGetter("gpt-4.1")
+    gpt41_mini = LLMModelGetter("gpt-4.1-mini")
+    gpt41_nano = LLMModelGetter("gpt-4.1-nano")
+    gpt4o = LLMModelGetter("gpt-4o")
+    gpt4o_mini = LLMModelGetter("gpt-4o-mini")
+    gpt4 = LLMModelGetter("gpt-4")
+    gpt4_turbo = LLMModelGetter("gpt-4-turbo")
+    gpt35_turbo = LLMModelGetter("gpt-3.5-turbo")
 
     def __init__(self, api_key: str) -> None:
         self.client = openai.AsyncOpenAI(api_key=api_key)
     
-    async def complete(self, request: CompletionRequest) -> CompletionResponse:
-        return await self._complete(
-            request=request,
-            response=CompletionResponse(),
-            messages=self._messages(request),
-        )
+    async def setup(self, operation: LLMOperation, state: dict[str, Any]) -> None:
+        await super().setup(operation, state)
+        log.debug("uploading files")
+        for file in operation.files:
+            if not file.data and file.is_image:
+                log.debug("%s is an image URL; skipping", file)
+                continue
+            await file.fetch()
+            hash: File | None = state.get(FILE_HASHES, {}).get(file.md5)
+            if hash:
+                log.debug("%s is already uploaded as %s; reusing", file, hash.id)
+                file.id = hash.id
+                return
+            file_object = await self.client.files.create(
+                file=(file.name, file.data, file.mimetype),
+                purpose="assistants",
+            )
+            log.debug("uploaded %s as %s", file.name, file_object.id)
+            file.id = file_object.id
+            state.setdefault(FILE_IDS, set()).add(file_object.id)
+            state.setdefault(FILE_HASHES, {})[file.md5] = file
     
-    async def construct[T: BaseModel](self, schema: type[T], request: CompletionRequest) -> StructuredOutputResponse[T]:
-        return await self._construct(
-            schema=schema,
-            request=request,
-            response=StructuredOutputResponse[T](),
-            messages=self._messages(request),
-        )
-
-    def _messages(self, request: CompletionRequest) -> list[dict[str, str]]:
+    async def teardown(self, state: dict[str, Any]) -> None:
+        await async_parallelize([(self._delete_file, (file_id,), {}) for file_id in state.pop(FILE_IDS, set())])
+        state.pop(FILE_HASHES, None)
+        await super().teardown(state)
+    
+    async def complete(self, completion: Completion) -> None:
+        await self._complete(completion, await self._messages(completion))
+    
+    async def construct[T: BaseModel](self, structured_output: StructuredOutput[T]) -> None:
+        if not structured_output.model.config.supports_structured_output:
+            log.debug("%s doesn't support structured output; using JSON instead", structured_output.model)
+            structured_output.append_json_instruction()
+            await self.complete(structured_output)
+            for text in structured_output.texts:
+                log.debug("decoding %s as JSON", text)
+                structured_output.add_object(json.loads(text))
+            return
+        await self._construct(structured_output, await self._messages(structured_output))
+    
+    async def _messages(self, completion: Completion) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = []
-        if request.system_prompt:
-            messages.append(self._system(request.system_prompt))
-        if request.history:
-            for interaction in request.history.interactions:
-                messages.append(self._user(interaction.user, interaction.files))
+        if completion.system_prompt:
+            messages.append(self._system(completion.get_system_prompt()))
+        if completion.history:
+            for interaction in completion.history.interactions:
+                messages.append(await self._user(interaction.user, interaction.files))
                 if interaction.calls:
                     messages.append(self._tool_call(interaction.calls))
                     messages.extend(self._tool_results(interaction.calls))
                 messages.append(self._assistant(interaction.assistant))
-        messages.append(self._user(request.user_message, request.files))
+        messages.append(await self._user(completion.get_user_message(), completion.files))
         return messages
     
     def _system(self, prompt: str) -> ChatCompletionSystemMessageParam:
+        log.debug("SYSTEM: %s", prompt)
         return ChatCompletionSystemMessageParam(role="system", content=prompt)
     
-    def _user(self, text: str | None, files: list[File]) -> ChatCompletionUserMessageParam:
-        images: list[str] = []
+    async def _user(self, text: str, files: list[File]) -> ChatCompletionUserMessageParam:
+        log.debug("USER: %s", text)
         for file in files:
-            if not file.mimetype.startswith("image/"):
-                raise ValueError(f"{self} does not support non-image files like {file}")
-            images.append(file.url)
+            log.debug("FILE: %s", file)
         content: str | list[dict[str, Any]]
-        if images:
+        if files:
             content = []
             if text:
-                content.append({"type": "text", "text": text})
-            for image in images:
-                content.append({"type": "image_url", "image_url": {"url": image}})
+                content.append(ChatCompletionContentPartTextParam(
+                    type="text",
+                    text=text,
+                ))
+            for file in files:
+                if file.is_image:
+                    content.append(ChatCompletionContentPartImageParam(
+                        type="image_url",
+                        image_url={"url": file.url},
+                    ))
+                else:
+                    content.append(ChatcompletionContentPartFileParam(
+                        type="file",
+                        file={"file_id": file.id},
+                    ))
         else:
-            content = text or CompletionRequest.no_content
+            content = text
         return ChatCompletionUserMessageParam(role="user", content=content)
     
     def _assistant(self, content: str) -> ChatCompletionAssistantMessageParam:
+        log.debug("ASSISTANT: %s", content)
         return ChatCompletionAssistantMessageParam(role="assistant", content=content)
     
     def _tool_call(self, calls: list[Call]) -> ChatCompletionAssistantMessageParam:
+        for call in calls:
+            log.debug("TOOL CALL: %s", call)
         return ChatCompletionAssistantMessageParam(
             role="assistant",
             tool_calls=[
@@ -103,106 +161,104 @@ class OpenAI(LLM):
         )
 
     def _tool_results(self, calls: list[Call]) -> list[ChatCompletionToolMessageParam]:
+        for call in calls:
+            log.debug("TOOL RESULT: %s", call.result_json)
         return [
             ChatCompletionToolMessageParam(
                 role="tool",
                 tool_call_id=call.id,
-                content=call.return_value_string,
+                content=call.result_json,
             )
             for call in calls
         ]
     
-    async def _complete(
-        self,
-        request: CompletionRequest,
-        response: CompletionResponse,
-        messages: list[ChatCompletionMessageParam],
-    ) -> CompletionResponse:
+    async def _complete(self, completion: Completion, messages: list[ChatCompletionMessageParam]) -> None:
         try:
-            completion = await self.client.chat.completions.create(
-                model=request.model,
+            response_format = {"type": "json_object"} if isinstance(completion, StructuredOutput) else openai.NOT_GIVEN
+            response = await self.client.chat.completions.create(
+                model=completion.model.name,
                 messages=messages,
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                temperature=_optional(request.temperature),
-                max_tokens=_optional(request.max_tokens),
-                seed=_optional(request.seed),
-                frequency_penalty=_optional(request.frequency_penalty),
-                presence_penalty=_optional(request.presence_penalty),
-                n=_optional(request.n),
-                top_p=_optional(request.top_p),
-                stop=_optional(request.stop),
+                tools=self._tools(completion),
+                tool_choice=self._tool_choice(completion),
+                temperature=_optional(completion.temperature),
+                max_tokens=_optional(completion.max_tokens),
+                seed=_optional(completion.seed),
+                frequency_penalty=_optional(completion.frequency_penalty),
+                presence_penalty=_optional(completion.presence_penalty),
+                n=_optional(completion.num_responses),
+                top_p=_optional(completion.top_p),
+                stop=_optional(completion.stop),
+                response_format=response_format,
             )
         except openai.APIError as error:
             raise Error(error)
-        for choice in self._choices(completion):
+        for choice in self._choices(response):
             if choice.finish_reason == "tool_calls":
-                await self._run_tools(request, response, messages, choice.message)
-                return await self._complete(request, response, messages)
+                await self._run_tools(completion, messages, choice.message.tool_calls)
+                return await self._complete(completion, messages)
             if not choice.message.content:
                 raise Error(f"no content in response from {self}")
-            response.contents.append(cast(str, choice.message.content))
-        return response
+            completion.add_text(choice.message.content)
 
     async def _construct[T: BaseModel](
         self,
-        schema: type[T],
-        request: CompletionRequest,
-        response: StructuredOutputResponse[T],
+        structured_output: StructuredOutput[T],
         messages: list[ChatCompletionMessageParam],
-    ) -> StructuredOutputResponse[T]:
+    ) -> None:
         try:
-            construction = await self.client.beta.chat.completions.parse(
-                model=request.model,
-                response_format=schema,
+            response = await self.client.beta.chat.completions.parse(
+                model=structured_output.model.name,
                 messages=messages,
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                temperature=_optional(request.temperature),
-                max_tokens=_optional(request.max_tokens),
-                seed=_optional(request.seed),
-                frequency_penalty=_optional(request.frequency_penalty),
-                presence_penalty=_optional(request.presence_penalty),
-                n=_optional(request.n),
-                top_p=_optional(request.top_p),
-                stop=_optional(request.stop),
+                tools=self._tools(structured_output),
+                tool_choice=self._tool_choice(structured_output),
+                temperature=_optional(structured_output.temperature),
+                max_tokens=_optional(structured_output.max_tokens),
+                seed=_optional(structured_output.seed),
+                frequency_penalty=_optional(structured_output.frequency_penalty),
+                presence_penalty=_optional(structured_output.presence_penalty),
+                n=_optional(structured_output.num_responses),
+                top_p=_optional(structured_output.top_p),
+                stop=_optional(structured_output.stop),
+                response_format=structured_output.schema,
             )
         except openai.APIError as error:
             raise Error(error)
-        for choice in self._choices(construction):
+        for choice in self._choices(response):
             if choice.finish_reason == "tool_calls":
-                await self._run_tools(request, response, messages, choice.message)
-                return await self._construct(schema, request, response, messages)
-            response.outputs.append(cast(T, choice.message.parsed))
-        return response
+                await self._run_tools(structured_output, messages, choice.message.tool_calls)
+                return await self._construct(structured_output, messages)
+            structured_output.add_object(cast(T, choice.message.parsed))
     
-    def _tools(self, request: CompletionRequest) -> list[ChatCompletionToolParam] | openai.NotGiven:
-        if not request.tools:
+    def _tools(self, completion: Completion) -> list[ChatCompletionToolParam] | openai.NotGiven:
+        if not completion.tools:
             return openai.NOT_GIVEN
         tools: list[ChatCompletionToolParam] = []
-        for tool in request.tools.values():
-            tools.append({
-                "type": "function",
-                "function": {
-                    "name": tool.schema["name"],
-                    "description": tool.schema["description"],
-                    "parameters": tool.schema["parameters"],
-                    "strict": True,
-                }
-            })
+        for tool in completion.tools.values():
+            tools.append(ChatCompletionToolParam(
+                type="function",
+                function=FunctionDefinition(
+                    name=tool.schema["name"],
+                    description=tool.schema["description"],
+                    parameters=tool.schema["parameters"],
+                    strict=True,
+                ),
+            ))
         return tools
     
     def _tool_choice(
         self,
-        request: CompletionRequest,
+        completion: Completion,
     ) -> openai.NotGiven | Literal["none"] | Literal["required"] | ChatCompletionNamedToolChoiceParam:
-        if request.use_tool is None:
+        if completion.use_tool is None:
             return openai.NOT_GIVEN
-        if request.use_tool is False:
+        if completion.use_tool is False:
             return "none"
-        if request.use_tool is True:
+        if completion.use_tool is True:
             return "required"
-        return {"type": "function", "function": {"name": request.use_tool}}
+        return ChatCompletionNamedToolChoiceParam(
+            type="function",
+            function={"name": completion.use_tool},
+        )
 
     @overload
     def _choices(self, response: ParsedChatCompletion) -> Iterator[ParsedChoice]: ...
@@ -224,19 +280,23 @@ class OpenAI(LLM):
 
     async def _run_tools(
         self,
-        request: Request,
-        response: Response,
+        completion: Completion,
         messages: list[dict[str, str]],
-        message: ChatCompletionMessage,
+        tool_calls: list[ChatCompletionMessageToolCall],
     ) -> None:
         calls: list[Call] = []
-        for tool_call in message.tool_calls or []:
-            call = Call(tool_call.id, request.tools[tool_call.function.name], tool_call.function.arguments)
+        for tool_call in tool_calls:
+            args = json.loads(tool_call.function.arguments)
+            call = Call(tool_call.id, completion.tools[tool_call.function.name], args)
             calls.append(call)
         await Call.async_run_all(calls)
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))
-        response.calls.extend(calls)
+        completion.calls.extend(calls)
+    
+    async def _delete_file(self, file_id: str) -> None:
+        log.debug("deleting %s", file_id)
+        await self.client.files.delete(file_id)
 
 
 def _optional[T](value: T | None) -> T | openai.NotGiven:
