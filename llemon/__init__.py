@@ -8,6 +8,7 @@ from .protocol import (
     Classification,
 )
 from .tool import Call, Tool
+from .tooling import Toolbox, Directory, Database
 from .providers import OpenAI, Gemini, DeepInfra, Anthropic
 from .utils import Error, SetupError, UnsupportedError, enable_logs
 
@@ -27,6 +28,9 @@ __all__ = [
     "Gemini",
     "DeepInfra",
     "Anthropic",
+    "Toolbox",
+    "Directory",
+    "Database",
     "Error",
     "SetupError",
     "UnsupportedError",

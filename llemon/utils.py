@@ -11,7 +11,6 @@ USER = "🧑 "
 ASSISTANT = "🤖 "
 FILE = "📎  "
 TOOL = "🛠️  "
-LEADING_EMPTY_LINES = re.compile(r"^([ \t]*\r?\n)+")
 INDENT_AND_CONTENT = re.compile(r"^(\s*)(.*)$", flags=re.DOTALL)
 
 executor: ThreadPoolExecutor | None = None
@@ -65,30 +64,18 @@ def split_indent(text: str) -> tuple[int, str]:
 
 
 def trim(text: str) -> str:
-    # Skip leading empty lines, but count them to keep the line numbers correct.
-    match = LEADING_EMPTY_LINES.match(text)
-    if not match:
-        skipped_lines = 0
-    else:
-        skipped_lines = match.group().count("\n")
-        text = text[match.end() :]
     text = text.rstrip().expandtabs()
-    indent: int | None = None
+    first_indent: int | None = None
     output: list[str] = []
-    for number, line in enumerate(text.splitlines(), skipped_lines):
-        # First non-empty line determines the indentation to crop off.
-        if indent is None:
-            indent, content = split_indent(line)
-            output.append(content)
-            continue
+    for line in text.splitlines():
         if not line.strip():
             continue
-        # Subsequent lines must start with at least the same indentation.
-        prefix = line[:indent]
-        if prefix and not prefix.isspace():
-            raise ValueError(f"expected line {number} to start with {indent!r} spaces, but got {prefix!r}")
-        line = line[indent:]
-        output.append(line)
+        if first_indent is None:
+            first_indent, content = split_indent(line)
+            output.append(content)
+            continue
+        indent, content = split_indent(line)
+        output.append(line[min(indent, first_indent):])
     return "\n".join(output)
 
 

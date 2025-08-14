@@ -17,7 +17,7 @@ from pydantic import BaseModel
 from ..file import File
 from ..llm import LLM, LLMModelGetter
 from ..protocol import Completion, Stream, StructuredOutput, LLMOperation
-from ..tool import Call, ToolRecord
+from ..tool import Call, Tool
 from ..utils import USER, ASSISTANT, Error
 
 log = logging.getLogger(__name__)
@@ -222,7 +222,7 @@ class Anthropic(LLM):
         structured_output: StructuredOutput[T],
         messages: list[MessageParam],
     ) -> None:
-        structured_output.tools["structured_output"] = ToolRecord({
+        structured_output.tools["structured_output"] = Tool({
             "name": "structured_output",
             "description": "Use this tool to output a structured object",
             "parameters": structured_output.schema.model_json_schema(),

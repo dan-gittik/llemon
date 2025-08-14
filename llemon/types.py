@@ -8,11 +8,11 @@ if TYPE_CHECKING:
     from .interaction import History, Interaction
     from .file import File
     from .protocol import LLMOperation
-    from .tool import Call, Tool
+    from .tool import Call, Tool, DynamicTool
 
 
 type FilesArgument = list[str | pathlib.Path | tuple[str, bytes] | File] | None
-type ToolsArgument = list[Callable[..., Any]] | dict[str, Tool] | None
+type ToolsArgument = list[Callable[..., Any] | DynamicTool] | dict[str, Tool] | None
 type CallArgument = dict[str, Any] | Call
 type InteractionArgument = list[dict[str, Any]] | Interaction
 type HistoryArgument = list[dict[str, Any]] | History | None

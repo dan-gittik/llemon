@@ -11,8 +11,9 @@ from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 
 from pydantic import BaseModel, ConfigDict
 
+from .tooling import Toolbox
 from .types import CallArgument, CallMessage, ToolsArgument, ToolSchema
-from .utils import TOOL
+from .utils import TOOL, trim
 
 log = logging.getLogger(__name__)
 schemas: dict[Callable[..., Any], ToolSchema] = {}
@@ -21,11 +22,11 @@ undefined = object()
 
 class Tool:
 
-    def __init__(self, function: Callable[..., Any]) -> None:
+    def __init__(self, schema: ToolSchema, function: Callable[..., Any] | None = None) -> None:
+        if function is None:
+            function = self._not_runnable
+        self.schema = schema
         self.function = function
-        self.name = function.__name__
-        self.description = function.__doc__ or ""
-        self.schema = self._parse_schema()
     
     def __str__(self) -> str:
         return f"tool {self.name!r}"
@@ -39,36 +40,51 @@ class Tool:
             return {}
         if isinstance(tools, dict):
             return tools
-        return {function.__name__: Tool(function) for function in tools}
+        resolved: dict[str, Tool] = {}
+        for tool in tools:
+            if isinstance(tool, Toolbox):
+                for name, description, function in tool.tools:
+                    schema = cls._parse_schema(function)
+                    schema.update(name=name, description=trim(description))
+                    resolved[name] = cls(schema, function)
+            else:
+                resolved[tool.__name__] = cls.from_function(tool)
+        return resolved
     
-    def _parse_schema(self) -> ToolSchema:
-        if self.function in schemas:
-            return schemas[self.function]
-        annotations = get_type_hints(self.function)
+    @classmethod
+    def from_function(cls, function: Callable[..., Any]) -> Tool:
+        return cls(cls._parse_schema(function), function)
+
+    
+    @classmethod
+    def _not_runnable(self, *args, **kwargs: Any) -> NoReturn:
+        raise RuntimeError(f"{self} is not associated with a runnable function")
+    
+    @classmethod
+    def _parse_schema(self, function: Callable[..., Any]) -> ToolSchema:
+        if function in schemas:
+            return schemas[function]
+        annotations = get_type_hints(function)
         annotations.pop("return", None)
-        model_class: type[BaseModel] = type(self.name, (BaseModel,), {
+        model_class: type[BaseModel] = type(function.__name__, (BaseModel,), {
             "__annotations__": annotations,
             "model_config": ConfigDict(extra='forbid')
         })
         schema = ToolSchema(
-            name=self.name,
-            description=self.description,
+            name=function.__name__,
+            description=trim(function.__doc__ or ""),
             parameters=model_class.model_json_schema(),
         )
-        schemas[self.function] = schema
+        schemas[function] = schema
         return schema
-
-
-class ToolRecord(Tool):
-
-    def __init__(self, schema: ToolSchema) -> None:
-        self.function = self._not_runnable
-        self.name = schema["name"]
-        self.description = schema["description"]
-        self.schema = schema
     
-    def _not_runnable(self, *args, **kwargs: Any) -> NoReturn:
-        raise RuntimeError(f"{self} is not associated with a runnable function")
+    @property
+    def name(self) -> str:
+        return self.schema["name"]
+    
+    @property
+    def description(self) -> str:
+        return self.schema["description"]
 
 
 class Call:
@@ -115,7 +131,7 @@ class Call:
         error = result.get("error")
         return cls(
             id=call["id"],
-            tool=ToolRecord(call["tool"]),
+            tool=Tool(call["tool"]),
             arguments_json=call["arguments"],
             return_value=return_value,
             error=error,
