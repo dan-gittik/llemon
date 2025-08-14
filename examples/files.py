@@ -1,10 +1,8 @@
 import asyncio
-import logging
 
-from llemon import OpenAI, Gemini, Anthropic, LLMModel
+from llemon import OpenAI, Gemini, Anthropic, LLMModel, enable_logs
 
-logging.basicConfig(level=logging.DEBUG)
-
+enable_logs()
 
 async def main():
     models: list[LLMModel] = [OpenAI.gpt5_nano, Anthropic.haiku3, Gemini.lite2]

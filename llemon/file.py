@@ -75,7 +75,7 @@ class File:
     @classmethod
     def from_url(cls, url: str, name: str | None = None, id: str | None = None) -> Self:
         if name is None:
-            name = url
+            name = url.rsplit("/", 1)[-1]
         if match := DATA_URL_PATTERN.match(url):
             mimetype, base64 = match.groups()
             file = cls(name, mimetype, base64.b64decode(base64), url=url, id=id)
@@ -88,7 +88,7 @@ class File:
     
     @classmethod
     def from_path(cls, path: str | pathlib.Path) -> Self:
-        path = pathlib.Path(path)
+        path = pathlib.Path(path).absolute()
         if not path.exists():
             raise FileNotFoundError(f"file {path} does not exist")
         if not path.is_file():

@@ -9,7 +9,7 @@ from .protocol import (
 )
 from .tool import Call, Tool
 from .providers import OpenAI, Gemini, DeepInfra, Anthropic
-from .utils import Error, SetupError, UnsupportedError
+from .utils import Error, SetupError, UnsupportedError, enable_logs
 
 __all__ = [
     "LLM",
@@ -30,4 +30,5 @@ __all__ = [
     "Error",
     "SetupError",
     "UnsupportedError",
+    "enable_logs",
 ]

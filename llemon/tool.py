@@ -12,6 +12,7 @@ from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 from pydantic import BaseModel, ConfigDict
 
 from .types import CallArgument, CallMessage, ToolsArgument, ToolSchema
+from .utils import TOOL
 
 log = logging.getLogger(__name__)
 schemas: dict[Callable[..., Any], ToolSchema] = {}
@@ -89,7 +90,7 @@ class Call:
         self._error = error
     
     def __str__(self) -> str:
-        output = [self.name]
+        output = [f"call {self.id!r}: {self.signature}"]
         if self._return_value is not undefined:
             output.append(f" -> {self._return_value}")
         elif self._error is not None:
@@ -135,8 +136,9 @@ class Call:
         await asyncio.gather(*tasks, return_exceptions=True)
     
     @cached_property
-    def name(self) -> str:
-        return f"call {self.id!r}: {self.tool.name}({self.arguments_json!r})"
+    def signature(self) -> str:
+        args = f", ".join(f"{key}={value!r}" for key, value in self.arguments.items())
+        return f"{self.tool.name}({args})"
     
     @cached_property
     def arguments_json(self) -> str:
@@ -180,26 +182,26 @@ class Call:
         return json.dumps(result)
 
     def run(self) -> None:
-        log.debug("running %s", self.name)
+        log.debug("running %s", self.signature)
         try:
             self._return_value = self.tool.function(**self.arguments)
-            log.debug("%s returned %r", self.name, self._return_value)
+            log.debug("%s returned %r", self.signature, self._return_value)
         except Exception as error:
             self._error = self._format_error(error)
-            log.debug("%s raised %r", self.name, self._error)
+            log.debug("%s raised %r", self.signature, self._error)
 
     async def async_run(self) -> None:
-        log.debug("running %s", self.name)
+        log.debug(TOOL + "%s", self.signature)
         try:
             if inspect.iscoroutinefunction(self.tool.function):
                 return_value = await self.tool.function(**self.arguments)
             else:
                 return_value = await asyncio.to_thread(self.tool.function, **self.arguments)
-            log.debug("%s returned %r", self.name, return_value)
+            log.debug("%s returned %r", self.signature, return_value)
             self._return_value = return_value
         except Exception as error:
             self._error = self._format_error(error)
-            log.debug("%s raised %r", self.name, self._error)
+            log.debug("%s raised %r", self.signature, self._error)
     
     def to_message(self) -> CallMessage:
         return CallMessage(

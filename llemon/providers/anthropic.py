@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, ClassVar, Literal
+import json
+import logging
+from typing import Any, ClassVar, Literal, AsyncIterator
 
 import anthropic
 from anthropic.types import (
@@ -9,15 +11,16 @@ from anthropic.types import (
     DocumentBlockParam,
     ToolParam,
     ToolChoiceToolParam,
-    ContentBlock,
-    ToolUseBlock,
 )
 from pydantic import BaseModel
 
 from ..file import File
 from ..llm import LLM, LLMModelGetter
-from ..protocol import Completion, StructuredOutput
+from ..protocol import Completion, Stream, StructuredOutput, LLMOperation
 from ..tool import Call, ToolRecord
+from ..utils import USER, ASSISTANT, Error
+
+log = logging.getLogger(__name__)
 
 
 class Anthropic(LLM):
@@ -38,19 +41,25 @@ class Anthropic(LLM):
     async def complete(self, completion: Completion) -> None:
         await self._complete(completion, await self._messages(completion))
     
+    async def stream(self, stream: Stream) -> None:
+        await self._stream(stream, await self._messages(stream))
+    
     async def construct[T: BaseModel](self, structured_output: StructuredOutput[T]) -> None:
         await self._construct(structured_output, await self._messages(structured_output))
     
     async def _messages(self, completion: Completion) -> list[dict[str, str]]:
         messages: list[dict[str, str]] = []
         if completion.history:
+            completion.history.log()
             for interaction in completion.history.interactions:
                 messages.append(await self._user(interaction.user, interaction.files))
                 if interaction.calls:
                     messages.append(self._tool_call(interaction.calls))
                     messages.append(self._tool_results(interaction.calls))
                 messages.append(self._assistant(interaction.assistant))
-        messages.append(await self._user(completion.get_user_message(), completion.files))
+        user_message = completion.get_user_message()
+        log.debug(USER + "%s", user_message)
+        messages.append(await self._user(user_message, completion.files))
         return messages
     
     async def _user(self, text: str, files: list[File]) -> MessageParam:
@@ -125,31 +134,88 @@ class Anthropic(LLM):
         )
 
     async def _complete(self, completion: Completion, messages: list[MessageParam]) -> None:
-        response = await self.client.messages.create(
-            model=completion.model.name,
-            messages=messages,
-            max_tokens=completion.max_tokens or self.default_max_tokens,
-            system=_optional(completion.system_prompt),
-            temperature=_optional(completion.temperature),
-            top_p=_optional(completion.top_p),
-            top_k=_optional(completion.top_k),
-            stop_sequences=_optional(completion.stop),
-            tools=self._tools(completion),
-            tool_choice=self._tool_choice(completion),
-        )
-        text: list[str] = []
-        tool_calls: list[ContentBlock] = []
+        try:
+            response = await self.client.messages.create(
+                model=completion.model.name,
+                messages=messages,
+                max_tokens=completion.max_tokens or self.default_max_tokens,
+                system=_optional(completion.system_prompt),
+                temperature=_optional(completion.temperature),
+                top_p=_optional(completion.top_p),
+                top_k=_optional(completion.top_k),
+                stop_sequences=_optional(completion.stop),
+                tools=self._tools(completion),
+                tool_choice=self._tool_choice(completion),
+            )
+        except anthropic.APIError as error:
+            raise Error(error)
+        self._check_stop_reason(response.stop_reason)
+        texts: list[str] = []
+        tools: list[tuple[str, str, dict[str, Any]]] = []
         for content in response.content:
             if content.type == "tool_use":
-                tool_calls.append(content)
+                tools.append((content.id, content.name, content.input))
             if content.type == "text":
-                text.append(content.text)
-        if tool_calls:
-            await self._run_tools(completion, messages, tool_calls)
+                texts.append(content.text)
+        if tools:
+            await self._run_tools(completion, messages, tools)
             return await self._complete(completion, messages)
+        text = "".join(texts)
         if not text:
             raise ValueError(f"no text in response from {self}")
-        completion.add_text("\n".join(text))
+        log.debug(ASSISTANT + "%s", text)
+        completion.add_text(text)
+    
+    async def _stream(self, stream: Stream, messages: list[MessageParam]) -> None:
+        try:
+            response = self.client.messages.stream(
+                model=stream.model.name,
+                messages=messages,
+                max_tokens=stream.max_tokens or self.default_max_tokens,
+                system=_optional(stream.system_prompt),
+                temperature=_optional(stream.temperature),
+                top_p=_optional(stream.top_p),
+                top_k=_optional(stream.top_k),
+                stop_sequences=_optional(stream.stop),
+                tools=self._tools(stream),
+                tool_choice=self._tool_choice(stream),
+            )
+        except anthropic.APIError as error:
+            raise Error(error)
+
+        async def chunks() -> AsyncIterator[str]:
+            tool_stream: dict[int, tuple[str, str, list[str]]] = {}
+            async with response as events:
+                async for event in events:
+                    if event.type == "message_delta":
+                        self._check_stop_reason(event.delta.stop_reason)
+                        if event.delta.stop_reason:
+                            break
+                    if event.type == "message_stop":
+                        break
+                    if event.type == "content_block_start":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            tool_stream[event.index] = block.id, block.name, []
+                    if event.type == "content_block_delta":
+                        delta = event.delta
+                        if delta.type == "text_delta" and delta.text:
+                            yield delta.text
+                        if delta.type == "input_json_delta":
+                            tool_stream[event.index][2].append(delta.partial_json)
+                    if event.type == "content_block_stop":
+                        block = event.content_block
+            if tool_stream:
+                yield "\n"
+                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
+                await self._run_tools(stream, messages, tools)
+                await self._stream(stream, messages)
+                async for chunk in stream.stream:
+                    yield chunk
+            else:
+                log.debug(ASSISTANT + "%s", stream.text)
+        
+        stream.stream = chunks()
     
     async def _construct[T: BaseModel](
         self,
@@ -164,38 +230,43 @@ class Anthropic(LLM):
         structured_output.append_instruction("""
             Use the structured_output tool to output a structured object.
         """)
-        response = await self.client.messages.create(
-            model=structured_output.model.name,
-            messages=messages,
-            max_tokens=structured_output.max_tokens or self.default_max_tokens,
-            system=_optional(structured_output.system_prompt),
-            temperature=_optional(structured_output.temperature),
-            top_p=_optional(structured_output.top_p),
-            top_k=_optional(structured_output.top_k),
-            stop_sequences=_optional(structured_output.stop),
-            tools=self._tools(structured_output),
-            tool_choice=self._tool_choice(structured_output),
-        )
-        dicts: list[dict[str, Any]] = []
-        tool_calls: list[ContentBlock] = []
+        try:
+            response = await self.client.messages.create(
+                model=structured_output.model.name,
+                messages=messages,
+                max_tokens=structured_output.max_tokens or self.default_max_tokens,
+                system=_optional(structured_output.system_prompt),
+                temperature=_optional(structured_output.temperature),
+                top_p=_optional(structured_output.top_p),
+                top_k=_optional(structured_output.top_k),
+                stop_sequences=_optional(structured_output.stop),
+                tools=self._tools(structured_output),
+                tool_choice=self._tool_choice(structured_output),
+            )
+        except anthropic.APIError as error:
+            raise Error(error)
+        self._check_stop_reason(response.stop_reason)
+        object_: dict[str, Any] = []
+        tools: list[tuple[str, str, dict[str, Any]]] = []
         for content in response.content:
             if content.type == "tool_use":
                 if content.name == "structured_output":
-                    dicts.append(content.input)
+                    object_ = content.input
                 else:
-                    tool_calls.append(content)
-        if tool_calls:
-            await self._run_tools(structured_output, messages, tool_calls)
+                    tools.append((content.id, content.name, content.input))
+        if tools:
+            await self._run_tools(structured_output, messages, tools)
             return await self._construct(structured_output, messages)
-        if not dicts:
-            raise ValueError(f"no models in response from {self}")
-        structured_output.add_object(*dicts)
+        if not object_:
+            raise Error(f"no objects in response from {self}")
+        log.debug(ASSISTANT + "%s", object_)
+        structured_output.add_object(object_)
 
-    def _tools(self, completion: Completion) -> list[ToolParam] | anthropic.NotGiven:
-        if not completion.tools:
+    def _tools(self, operation: LLMOperation) -> list[ToolParam] | anthropic.NotGiven:
+        if not operation.tools:
             return anthropic.NOT_GIVEN
         tools: list[ToolParam] = []
-        for tool in completion.tools.values():
+        for tool in operation.tools.values():
             tools.append({
                 "name": tool.schema["name"],
                 "description": tool.schema["description"],
@@ -205,30 +276,33 @@ class Anthropic(LLM):
     
     def _tool_choice(
         self,
-        completion: Completion,
+        operation: LLMOperation,
     ) -> anthropic.NotGiven | Literal["none"] | Literal["any"] | ToolChoiceToolParam:
-        if completion.use_tool is None:
+        if operation.use_tool is None:
             return anthropic.NOT_GIVEN
-        if completion.use_tool is False:
+        if operation.use_tool is False:
             return ToolChoiceToolParam(type="none")
-        if completion.use_tool is True:
+        if operation.use_tool is True:
             return ToolChoiceToolParam(type="any")
-        return ToolChoiceToolParam(type="tool", name=completion.use_tool, disable_parallel_tool_use=True)
-
+        return ToolChoiceToolParam(type="tool", name=operation.use_tool, disable_parallel_tool_use=True)
+    
+    def _check_stop_reason(self, reason: str) -> None:
+        if reason == "refusal":
+            raise Error(f"response from {self} was refused")
+        if reason == "max_tokens" and not self.return_incomplete_messages:
+            raise Error(f"response from {self} exceeded the maximum length")
+    
     async def _run_tools(
         self,
-        completion: Completion,
+        operation: LLMOperation,
         messages: list[dict[str, str]],
-        tool_calls: list[ToolUseBlock],
+        tool_calls: list[tuple[str, str, dict[str, Any]]],
     ) -> None:
-        calls: list[Call] = []
-        for tool_call in tool_calls:
-            call = Call(tool_call.id, completion.tools[tool_call.name], tool_call.input)
-            calls.append(call)
+        calls = [Call(id, operation.tools[name], args) for id, name, args in tool_calls]
         await Call.async_run_all(calls)
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))
-        completion.calls.extend(calls)
+        operation.calls.extend(calls)
     
 
 def _optional[T](value: T | None) -> T | anthropic.NotGiven:

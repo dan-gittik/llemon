@@ -1,11 +1,10 @@
 from __future__ import annotations
 import asyncio
-import logging
 
-from llemon import OpenAI, Gemini, Anthropic, LLMModel
+from llemon import OpenAI, Gemini, Anthropic, LLMModel, enable_logs
 from pydantic import BaseModel
 
-logging.basicConfig(level=logging.DEBUG)
+enable_logs()
 
 
 class Translation(BaseModel):

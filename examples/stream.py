@@ -22,15 +22,20 @@ async def main():
     for model in models:
         print(model)
         conv = model("you are a pirate", tools=[get_weather])
-        response = await conv.complete("""
+        response = conv.stream("""
             where is it hottest, in Paris, Berlin or Tokyo?
         """)
-        print(response)
+        async for chunk in response:
+            print(chunk, end="", flush=True)
+        print()
         print(conv.history)
-        response = await conv.complete("""
+        response = conv.stream("""
             so which one is coldest?
         """, use_tool=False)
-        print(response)
+        async for chunk in response:
+            print(chunk, end="", flush=True)
+        print()
+        print(conv.history)
 
 
 asyncio.run(main())

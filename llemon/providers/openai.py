@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Iterator, Literal, cast, overload
+from typing import Any, AsyncIterator, Iterator, Literal, cast, overload
 
 import openai
 from openai.types.chat import (
@@ -29,8 +29,8 @@ from pydantic import BaseModel
 
 from ..file import File
 from ..llm import LLM, LLMModelGetter
-from ..protocol import Call, Completion, LLMOperation, StructuredOutput
-from ..utils import Error, async_parallelize
+from ..protocol import Call, Completion, LLMOperation, Stream, StructuredOutput
+from ..utils import USER, ASSISTANT, Error, async_parallelize
 
 FILE_IDS = "openai.file_ids"
 FILE_HASHES = "openai.file_hashes"
@@ -57,7 +57,8 @@ class OpenAI(LLM):
     
     async def setup(self, operation: LLMOperation, state: dict[str, Any]) -> None:
         await super().setup(operation, state)
-        log.debug("uploading files")
+        if operation.files:
+            log.debug("uploading files")
         for file in operation.files:
             if not file.data and file.is_image:
                 log.debug("%s is an image URL; skipping", file)
@@ -85,11 +86,14 @@ class OpenAI(LLM):
     async def complete(self, completion: Completion) -> None:
         await self._complete(completion, await self._messages(completion))
     
+    async def stream(self, stream: Stream) -> None:
+        await self._stream(stream, await self._messages(stream))
+    
     async def construct[T: BaseModel](self, structured_output: StructuredOutput[T]) -> None:
         if not structured_output.model.config.supports_structured_output:
             log.debug("%s doesn't support structured output; using JSON instead", structured_output.model)
             structured_output.append_json_instruction()
-            await self.complete(structured_output)
+            await self._complete(structured_output, await self._messages(structured_output), json=True)
             for text in structured_output.texts:
                 log.debug("decoding %s as JSON", text)
                 structured_output.add_object(json.loads(text))
@@ -101,23 +105,22 @@ class OpenAI(LLM):
         if completion.system_prompt:
             messages.append(self._system(completion.get_system_prompt()))
         if completion.history:
+            completion.history.log()
             for interaction in completion.history.interactions:
                 messages.append(await self._user(interaction.user, interaction.files))
                 if interaction.calls:
                     messages.append(self._tool_call(interaction.calls))
                     messages.extend(self._tool_results(interaction.calls))
                 messages.append(self._assistant(interaction.assistant))
-        messages.append(await self._user(completion.get_user_message(), completion.files))
+        user_message = completion.get_user_message()
+        log.debug(USER + "%s", user_message)
+        messages.append(await self._user(user_message, completion.files))
         return messages
     
     def _system(self, prompt: str) -> ChatCompletionSystemMessageParam:
-        log.debug("SYSTEM: %s", prompt)
         return ChatCompletionSystemMessageParam(role="system", content=prompt)
     
     async def _user(self, text: str, files: list[File]) -> ChatCompletionUserMessageParam:
-        log.debug("USER: %s", text)
-        for file in files:
-            log.debug("FILE: %s", file)
         content: str | list[dict[str, Any]]
         if files:
             content = []
@@ -142,12 +145,9 @@ class OpenAI(LLM):
         return ChatCompletionUserMessageParam(role="user", content=content)
     
     def _assistant(self, content: str) -> ChatCompletionAssistantMessageParam:
-        log.debug("ASSISTANT: %s", content)
         return ChatCompletionAssistantMessageParam(role="assistant", content=content)
     
     def _tool_call(self, calls: list[Call]) -> ChatCompletionAssistantMessageParam:
-        for call in calls:
-            log.debug("TOOL CALL: %s", call)
         return ChatCompletionAssistantMessageParam(
             role="assistant",
             tool_calls=[
@@ -161,8 +161,6 @@ class OpenAI(LLM):
         )
 
     def _tool_results(self, calls: list[Call]) -> list[ChatCompletionToolMessageParam]:
-        for call in calls:
-            log.debug("TOOL RESULT: %s", call.result_json)
         return [
             ChatCompletionToolMessageParam(
                 role="tool",
@@ -172,9 +170,14 @@ class OpenAI(LLM):
             for call in calls
         ]
     
-    async def _complete(self, completion: Completion, messages: list[ChatCompletionMessageParam]) -> None:
+    async def _complete(
+        self,
+        completion: Completion,
+        messages: list[ChatCompletionMessageParam],
+        json: bool = False,
+    ) -> None:
         try:
-            response_format = {"type": "json_object"} if isinstance(completion, StructuredOutput) else openai.NOT_GIVEN
+            response_format = {"type": "json_object"} if json else openai.NOT_GIVEN
             response = await self.client.chat.completions.create(
                 model=completion.model.name,
                 messages=messages,
@@ -194,11 +197,61 @@ class OpenAI(LLM):
             raise Error(error)
         for choice in self._choices(response):
             if choice.finish_reason == "tool_calls":
-                await self._run_tools(completion, messages, choice.message.tool_calls)
-                return await self._complete(completion, messages)
+                await self._run_tools(completion, messages, self._tool_calls(choice.message.tool_calls))
+                return await self._complete(completion, messages, json=json)
             if not choice.message.content:
                 raise Error(f"no content in response from {self}")
+            log.debug(ASSISTANT + "%s", choice.message.content)
             completion.add_text(choice.message.content)
+
+    async def _stream(self, stream: Stream, messages: list[ChatCompletionMessageParam]) -> None:
+        try:
+            response = await self.client.chat.completions.create(
+                model=stream.model.name,
+                messages=messages,
+                tools=self._tools(stream),
+                tool_choice=self._tool_choice(stream),
+                temperature=_optional(stream.temperature),
+                max_tokens=_optional(stream.max_tokens),
+                seed=_optional(stream.seed),
+                frequency_penalty=_optional(stream.frequency_penalty),
+                presence_penalty=_optional(stream.presence_penalty),
+                top_p=_optional(stream.top_p),
+                stop=_optional(stream.stop),
+                stream=True,
+            )
+        except openai.APIError as error:
+            raise Error(error)
+        
+        async def chunks() -> AsyncIterator[str]:
+            tool_stream: dict[int, tuple[str, str, list[str]]] = {}
+            async for chunk in response:
+                choice = chunk.choices[0]
+                if choice.finish_reason:
+                    self._check_finish_reason(choice.finish_reason)
+                    break
+                if choice.delta.tool_calls:
+                    for tool_call in choice.delta.tool_calls:
+                        function = tool_call.function
+                        if not function:
+                            continue
+                        if tool_call.index not in tool_stream:
+                            tool_stream[tool_call.index] = (tool_call.id, function.name, [function.arguments])
+                        else:
+                            tool_stream[tool_call.index][2].append(function.arguments)
+                if not choice.delta.content:
+                    continue
+                yield choice.delta.content
+            if tool_stream:
+                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
+                await self._run_tools(stream, messages, tools)
+                await self._stream(stream, messages)
+                async for chunk in stream.stream:
+                    yield chunk
+            else:
+                log.debug(ASSISTANT + "%s", stream.text)
+        
+        stream.stream = chunks()
 
     async def _construct[T: BaseModel](
         self,
@@ -225,15 +278,18 @@ class OpenAI(LLM):
             raise Error(error)
         for choice in self._choices(response):
             if choice.finish_reason == "tool_calls":
-                await self._run_tools(structured_output, messages, choice.message.tool_calls)
+                await self._run_tools(structured_output, messages, self._tool_calls(choice.message.tool_calls))
                 return await self._construct(structured_output, messages)
+            if not choice.message.parsed:
+                raise Error(f"no object in response from {self}")
+            log.debug(ASSISTANT + "%s", choice.message.parsed)
             structured_output.add_object(cast(T, choice.message.parsed))
     
-    def _tools(self, completion: Completion) -> list[ChatCompletionToolParam] | openai.NotGiven:
-        if not completion.tools:
+    def _tools(self, operation: LLMOperation) -> list[ChatCompletionToolParam] | openai.NotGiven:
+        if not operation.tools:
             return openai.NOT_GIVEN
         tools: list[ChatCompletionToolParam] = []
-        for tool in completion.tools.values():
+        for tool in operation.tools.values():
             tools.append(ChatCompletionToolParam(
                 type="function",
                 function=FunctionDefinition(
@@ -247,18 +303,21 @@ class OpenAI(LLM):
     
     def _tool_choice(
         self,
-        completion: Completion,
+        operation: LLMOperation,
     ) -> openai.NotGiven | Literal["none"] | Literal["required"] | ChatCompletionNamedToolChoiceParam:
-        if completion.use_tool is None:
+        if operation.use_tool is None:
             return openai.NOT_GIVEN
-        if completion.use_tool is False:
+        if operation.use_tool is False:
             return "none"
-        if completion.use_tool is True:
+        if operation.use_tool is True:
             return "required"
         return ChatCompletionNamedToolChoiceParam(
             type="function",
-            function={"name": completion.use_tool},
+            function={"name": operation.use_tool},
         )
+    
+    def _tool_calls(self, tool_calls: list[ChatCompletionMessageToolCall]) -> list[tuple[str, str, dict[str, Any]]]:
+        return [(tool.id, tool.function.name, json.loads(tool.function.arguments)) for tool in tool_calls]
 
     @overload
     def _choices(self, response: ParsedChatCompletion) -> Iterator[ParsedChoice]: ...
@@ -270,29 +329,28 @@ class OpenAI(LLM):
         if not response.choices:
             raise Error(f"no response from {self}")
         for choice in response.choices:
-            if choice.finish_reason == "content_filter":
-                raise Error(f"response from {self} was filtered")
-            if choice.finish_reason == "length":
-                raise Error(f"response from {self} exceeded the maximum length")
+            self._check_finish_reason(choice.finish_reason)
             if choice.message.refusal:
                 raise Error(f"response from {self} was refused: {choice.message.refusal}")
             yield choice
+    
+    def _check_finish_reason(self, reason: str) -> None:
+        if reason == "content_filter":
+            raise Error(f"response from {self} was filtered")
+        if reason == "length" and not self.return_incomplete_messages:
+            raise Error(f"response from {self} exceeded the maximum length")
 
     async def _run_tools(
         self,
-        completion: Completion,
+        operation: LLMOperation,
         messages: list[dict[str, str]],
-        tool_calls: list[ChatCompletionMessageToolCall],
+        tools: list[tuple[str, str, dict[str, Any]]],
     ) -> None:
-        calls: list[Call] = []
-        for tool_call in tool_calls:
-            args = json.loads(tool_call.function.arguments)
-            call = Call(tool_call.id, completion.tools[tool_call.function.name], args)
-            calls.append(call)
+        calls = [Call(id, operation.tools[name], args) for id, name, args in tools]
         await Call.async_run_all(calls)
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))
-        completion.calls.extend(calls)
+        operation.calls.extend(calls)
     
     async def _delete_file(self, file_id: str) -> None:
         log.debug("deleting %s", file_id)

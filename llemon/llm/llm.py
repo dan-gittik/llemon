@@ -20,6 +20,8 @@ log = logging.getLogger(__name__)
 
 class LLM:
 
+    return_incomplete_messages: ClassVar[bool] = False
+
     configurations: dict[str, Any] = {}
     instance: ClassVar[Self | None] = None
     models: ClassVar[dict[str, LLMModel]] = {}

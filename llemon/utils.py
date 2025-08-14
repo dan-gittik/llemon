@@ -1,9 +1,16 @@
 import asyncio
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 import datetime as dt
+import logging
 import re
 from typing import Any, Callable, Iterable
 
+from rich.logging import RichHandler
+
+USER = "🧑 "
+ASSISTANT = "🤖 "
+FILE = "📎  "
+TOOL = "🛠️  "
 LEADING_EMPTY_LINES = re.compile(r"^([ \t]*\r?\n)+")
 INDENT_AND_CONTENT = re.compile(r"^(\s*)(.*)$", flags=re.DOTALL)
 
@@ -20,6 +27,19 @@ class SetupError(Error):
 
 class UnsupportedError(Error):
     pass
+
+
+def enable_logs(level: int = logging.DEBUG) -> None:
+    handler = RichHandler(rich_tracebacks=True)
+    handler.setLevel(level)
+    for name in logging.root.manager.loggerDict:
+        if not name.startswith(__package__):
+            continue
+        log = logging.getLogger(name)
+        log.propagate = False
+        log.setLevel(level)
+        if not any(isinstance(handler, RichHandler) for handler in log.handlers):
+            log.addHandler(handler)
 
 
 def now() -> dt.datetime:

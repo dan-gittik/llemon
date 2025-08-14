@@ -165,9 +165,6 @@ class Stream(Completion):
     def text(self) -> str:
         return "".join(self.chunks)
     
-    def set_stream(self, stream: AsyncIterator[str]) -> None:
-        self.stream = stream
-    
     async def __aiter__(self) -> AsyncIterator[str]:
         started = time.monotonic()
         async for chunk in self.stream:

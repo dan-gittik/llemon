@@ -13,7 +13,6 @@ from .protocol import Completion, Classification, Stream, StructuredOutput, LLMO
 from .schema import schema_to_model
 from .tool import Tool
 from .types import FormattingArgument, FilesArgument, HistoryArgument, Messages, SystemMessage, ToolsArgument
-from .utils import now
 
 if TYPE_CHECKING:
     from .llm import LLM, LLMModel

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+import logging
+from typing import Any, AsyncIterator
 
 from google import genai
 from google.genai.types import (
@@ -21,8 +22,11 @@ from pydantic import BaseModel
 
 from ..file import File
 from ..llm import LLM, LLMModelGetter
-from ..protocol import Completion, StructuredOutput
+from ..protocol import Completion, StructuredOutput, Stream, LLMOperation
 from ..tool import Call
+from ..utils import USER, ASSISTANT, Error, SetupError
+
+log = logging.getLogger(__name__)
 
 
 class Gemini(LLM):
@@ -41,7 +45,7 @@ class Gemini(LLM):
         version: str | None = None,
     ) -> None:
         if sum([bool(api_key), bool(project) or bool(location)]) != 1:
-            raise ValueError("either API key or project and location must be provided")
+            raise SetupError("either API key or project and location must be provided")
         options: dict[str, Any] = {}
         if version:
             options["http_options"] = HttpOptions(api_version=version)
@@ -51,18 +55,16 @@ class Gemini(LLM):
             self.client = genai.Client(project=project, location=location, vertexai=True)
     
     async def complete(self, completion: Completion) -> None:
-        return await self._complete(
-            completion=completion,
-            config=self._config(completion),
-            contents=await self._contents(completion),
-        )
+        contents = await self._contents(completion)
+        await self._complete(completion, self._config(completion), contents)
+    
+    async def stream(self, stream: Stream) -> None:
+        contents = await self._contents(stream)
+        await self._stream(stream, self._config(stream), contents)
     
     async def construct[T: BaseModel](self, structured_output: StructuredOutput[T]) -> None:
-        return await self._construct(
-            structured_output=structured_output,
-            config=self._config(structured_output),
-            contents=await self._contents(structured_output),
-        )
+        contents = await self._contents(structured_output)
+        await self._construct(structured_output, self._config(structured_output), contents)
 
     def _config(self, completion: Completion) -> GenerateContentConfig:
         config = GenerateContentConfig(
@@ -90,13 +92,16 @@ class Gemini(LLM):
     async def _contents(self, completion: Completion) -> list[Content]:
         contents: list[Content] = []
         if completion.history:
+            completion.history.log()
             for interaction in completion.history.interactions:
                 contents.append(await self._user(interaction.user, interaction.files))
                 if interaction.calls:
                     contents.append(self._tool_call(interaction.calls))
                     contents.append(self._tool_results(interaction.calls))
                 contents.append(self._assistant(interaction.assistant))
-        contents.append(await self._user(completion.get_user_message(), completion.files))
+        user_message = completion.get_user_message()
+        log.debug(USER + "%s", user_message)
+        contents.append(await self._user(user_message, completion.files))
         return contents
     
     def _system(self, prompt: str) -> Content:
@@ -137,11 +142,11 @@ class Gemini(LLM):
             ))
         return Content(role="tool", parts=parts)
     
-    def _tools(self, completion: Completion) -> ToolListUnion | None:
-        if not completion.tools or completion.use_tool is False:
+    def _tools(self, operation: LLMOperation) -> ToolListUnion | None:
+        if not operation.tools or operation.use_tool is False:
             return None
         tools: ToolListUnion = []
-        for tool in completion.tools.values():
+        for tool in operation.tools.values():
             tools.append(Tool(
                 function_declarations=[FunctionDeclaration(
                     name=tool.schema["name"],
@@ -152,16 +157,49 @@ class Gemini(LLM):
         return tools
 
     async def _complete(self, completion: Completion, config: GenerateContentConfig, contents: list[Content]) -> None:
-        response = await self.client.aio.models.generate_content(
-            model=completion.model.name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=completion.model.name,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise Error(error)
         if response.function_calls:
             await self._run_tools(completion, contents, response.function_calls)
             return await self._complete(completion, config, contents)
         for candidate in response.candidates:
-            completion.add_text(candidate.content.parts[0].text)
+            text = candidate.content.parts[0].text
+            completion.add_text(text)
+            log.debug(ASSISTANT + "%s", text)
+    
+    async def _stream(self, stream: Stream, config: GenerateContentConfig, contents: list[Content]) -> None:
+        try:
+            response = await self.client.aio.models.generate_content_stream(
+                model=stream.model.name,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise Error(error)
+
+        async def chunks() -> AsyncIterator[str]:
+            function_calls: list[FunctionCall] = []
+            async for chunk in response:
+                if chunk.function_calls:
+                    function_calls.extend(chunk.function_calls)
+                elif chunk.candidates and chunk.candidates[0].content.parts:
+                    text = chunk.candidates[0].content.parts[0].text
+                    yield text
+            if function_calls:
+                await self._run_tools(stream, contents, function_calls)
+                await self._stream(stream, config, contents)
+                async for chunk in stream.stream:
+                    yield chunk
+            else:
+                log.debug(ASSISTANT + "%s", stream.text)
+
+        stream.stream = chunks()
 
     async def _construct[T: BaseModel](
         self,
@@ -169,28 +207,33 @@ class Gemini(LLM):
         config: GenerateContentConfig,
         contents: list[Content],
     ) -> None:
-        response = await self.client.aio.models.generate_content(
-            model=structured_output.model.name,
-            contents=contents,
-            config=config,
-        )
+        try:
+            response = await self.client.aio.models.generate_content(
+                model=structured_output.model.name,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise Error(error)
         if response.function_calls:
             await self._run_tools(structured_output, contents, response.function_calls)
             return await self._construct(structured_output, config, contents)
         for candidate in response.candidates:
-            structured_output.add_object(json.loads(candidate.content.parts[0].text))
+            object_ = json.loads(candidate.content.parts[0].text)
+            structured_output.add_object(object_)
+            log.debug(ASSISTANT + "%s", object_)
 
     async def _run_tools(
         self,
-        completion: Completion,
+        operation: LLMOperation,
         contents: list[Content],
         function_calls: list[FunctionCall],
     ) -> None:
         calls: list[Call] = []
         for function_call in function_calls:
-            call = Call(function_call.id, completion.tools[function_call.name], function_call.args or {})
+            call = Call(function_call.id, operation.tools[function_call.name], function_call.args or {})
             calls.append(call)
         await Call.async_run_all(calls)
         contents.append(self._tool_call(calls))
         contents.append(self._tool_results(calls))
-        completion.calls.extend(calls)
+        operation.calls.extend(calls)
