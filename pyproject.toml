@@ -32,6 +32,9 @@ uvicorn = "^0.35.0"
 pytest-asyncio = "^1.1.0"
 pre-commit = "^4.3.0"
 
+[tool.ruff]
+line-length = 120
+
 [tool.poe.tasks]
 run = "python dev.py run"
 clean = "python dev.py clean"
