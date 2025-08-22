@@ -23,8 +23,8 @@ class Rendering:
     }
     default_bracket: ClassVar[str] = "{"
     renderers: ClassVar[dict[str, Rendering]] = {}
-    context: ClassVar[dict[str, Any]] = {}
-    functions: ClassVar[dict[str, Callable]] = {}
+    namespace: ClassVar[dict[str, Any]] = {}
+    predicates: ClassVar[dict[str, Callable]] = {}
 
     def __init__(self, bracket: str) -> None:
         self.bracket = bracket
@@ -38,8 +38,7 @@ class Rendering:
             comment_end_string=f"#{self.closing_bracket}",
             undefined=StrictUndefined,
         )
-        self._env.tests.update(self.functions)
-        self._env.globals.update(self.context)
+        self._env.tests.update(self.predicates)
         self._regex = re.compile(rf"{re.escape(open)}\s*!\s*(.*?){re.escape(close)}")
 
     def __str__(self) -> str:
@@ -73,13 +72,18 @@ class Rendering:
 
     @classmethod
     def function(cls, function: Callable[..., Any]) -> Callable[..., Any]:
+        cls.namespace[function.__name__] = function
+        return function
+
+    @classmethod
+    def predicate(cls, function: Callable[..., Any]) -> Callable[..., Any]:
         function = to_sync(function)
 
         @pass_context
         def test(ctx: Context, *args: Any, **kwargs: Any) -> Any:
             return function(dict(ctx), *args, **kwargs)
 
-        cls.functions[function.__name__] = test
+        cls.predicates[function.__name__] = test
         return function
     
     @cached_property
@@ -87,7 +91,7 @@ class Rendering:
         return self.closing_brackets[self.bracket]
 
     def render(self, text: str, context_dict: dict[str, Any] | None = None, /, **context_kwargs: Any) -> str:
-        context = (context_dict or {}) | context_kwargs
+        context = self.namespace | (context_dict or {}) | context_kwargs
         if matches := list(self._regex.finditer(text)):
             ctx = {key: to_sync(value) if callable(value) else value for key, value in context.items()}
             expressions = [match.group(1) for match in matches]

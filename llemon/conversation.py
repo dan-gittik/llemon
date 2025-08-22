@@ -206,11 +206,11 @@ class Conversation:
             return await self.rendering.render(self.instructions, self.context)
         return self.instructions
 
-    def format(self, one_line: bool = False) -> str:
+    def format(self, one_line: bool = False, emoji: bool = True) -> str:
         interactions: list[str] = []
         for request, response in self.history:
-            interactions.append(request.format())
-            interactions.append(response.format())
+            interactions.append(request.format(emoji=emoji))
+            interactions.append(response.format(emoji=emoji))
         if one_line:
             interactions = [SPACES.sub(" ", interaction) for interaction in interactions]
             separator = " | "

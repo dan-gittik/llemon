@@ -10,12 +10,15 @@ from google.genai.types import (
     Content,
     FinishReason,
     FunctionDeclaration,
+    FunctionCallingConfig,
+    FunctionCallingConfigMode,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
     ModelContent,
     Part,
     Tool,
+    ToolConfig,
     ToolListUnion,
     UserContent,
 )
@@ -87,6 +90,21 @@ class Gemini(LLM):
         )
         if request.instructions:
             config.system_instruction = self._system(await request.render_instructions())
+        if request.use_tool is not None:
+            if request.use_tool is False:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.NONE,
+                )
+            elif request.use_tool is True:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.ANY,
+                )
+            else:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=[request.get_tool_name(request.use_tool)],
+                )
+            config.tool_config = ToolConfig(function_calling_config=function_config)
         if isinstance(request, GenerateObjectRequest):
             config.response_mime_type = "application/json"
             config.response_schema = request.schema

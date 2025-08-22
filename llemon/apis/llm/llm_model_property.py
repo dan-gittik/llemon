@@ -11,4 +11,4 @@ class LLMModelProperty:
 
     def __get__(self, instance: object, owner: type) -> LLMModel:
         provider = cast(type[LLM], owner)
-        return provider.get(self.name)
+        return provider.model(self.name)

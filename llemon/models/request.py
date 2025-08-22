@@ -47,7 +47,7 @@ class Request:
     def check_supported(self) -> None:
         pass
 
-    def format(self) -> str:
+    def format(self, emoji: bool = True) -> str:
         raise NotImplementedError()
 
     @classmethod

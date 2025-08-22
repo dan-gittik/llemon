@@ -34,7 +34,7 @@ def model(request: pytest.FixtureRequest) -> Iterator[LLMModel]:
     provider: LLM = request.param[0]
     model: str = request.param[1]
     try:
-        yield provider.get(model)
+        yield provider.model(model)
     except errors.ConfigurationError:
         pytest.skip(f"provider {provider.__name__} doesn isn't available")
     provider.models.clear()
