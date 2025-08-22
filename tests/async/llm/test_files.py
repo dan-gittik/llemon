@@ -23,3 +23,8 @@ async def test_generate_with_unexisting_file(model: LLMModel, tmp_path):
     my_file = tmp_path / "foo"
     with pytest.raises(FileNotFoundError):
         await model.generate("What is written in the file?", files=[my_file])
+
+
+async def test_generate_with_not_a_file(model: LLMModel, tmp_path):
+    with pytest.raises(IsADirectoryError):
+        await model.generate("What is written in the file?", files=[tmp_path])
