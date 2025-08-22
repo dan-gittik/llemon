@@ -13,7 +13,9 @@ from llemon import (
     errors,
 )
 
-enable_logs()
+
+def pytest_configure(config):
+    enable_logs()
 
 
 @pytest.fixture(
