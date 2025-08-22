@@ -19,7 +19,7 @@ async def test_generate_with_multiple_files(model: LLMModel, example_assets):
     assert all(animal in response.text.lower() for animal in expected_animals)
 
 
-async def test_generate_with_unexisitng_file(model: LLMModel, example_assets):
-    my_file = example_assets / "foo"
+async def test_generate_with_unexisting_file(model: LLMModel, tmp_path):
+    my_file = tmp_path / "foo"
     with pytest.raises(FileNotFoundError):
         await model.generate("What is written in the file?", files=[my_file])
