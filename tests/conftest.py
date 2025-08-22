@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Iterator
 
 import pytest
@@ -16,6 +17,11 @@ from llemon import (
 
 def pytest_configure(config):
     enable_logs()
+
+
+@pytest.fixture
+def example_assets() -> Path:
+    return Path(__file__).parent.parent / "examples" / "files"
 
 
 @pytest.fixture(
