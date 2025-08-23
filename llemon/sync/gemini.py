@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator, Literal, cast
+from typing import Iterator, Literal, NoReturn, cast
 
 from google import genai
 from google.genai.types import (
@@ -10,19 +10,24 @@ from google.genai.types import (
     Content,
     FinishReason,
     FunctionDeclaration,
+    FunctionCallingConfig,
+    FunctionCallingConfigMode,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
     ModelContent,
     Part,
     Tool,
+    ToolConfig,
     ToolListUnion,
     UserContent,
 )
 from pydantic import BaseModel
 
 from llemon.sync.llm import LLM
+from llemon.sync.llm_model import LLMModel
 from llemon.apis.llm.llm_model_property import LLMModelProperty
+from llemon.sync.llm_tokenizer import LLMTokenizer
 from llemon.errors import ConfigurationError, Error
 from llemon.models.file import File
 from llemon.sync.generate import GenerateRequest, GenerateResponse
@@ -59,6 +64,9 @@ class Gemini(LLM):
             self.client = genai.Client(api_key=api_key)
         else:
             self.client = genai.Client(project=project, location=location, vertexai=True)
+    
+    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
+        return GeminiTokenizer(self.client, model)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         return self._generate(request, GenerateResponse(request))
@@ -87,6 +95,21 @@ class Gemini(LLM):
         )
         if request.instructions:
             config.system_instruction = self._system(request.render_instructions())
+        if request.use_tool is not None:
+            if request.use_tool is False:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.NONE,
+                )
+            elif request.use_tool is True:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.ANY,
+                )
+            else:
+                function_config = FunctionCallingConfig(
+                    mode=FunctionCallingConfigMode.ANY,
+                    allowed_function_names=[request.get_tool_name(request.use_tool)],
+                )
+            config.tool_config = ToolConfig(function_calling_config=function_config)
         if isinstance(request, GenerateObjectRequest):
             config.response_mime_type = "application/json"
             config.response_schema = request.schema
@@ -315,3 +338,29 @@ class Gemini(LLM):
         contents.append(self._tool_call(calls))
         contents.append(self._tool_results(calls))
         response.calls.extend(calls)
+
+
+class GeminiTokenizer(LLMTokenizer):
+
+    def __init__(self, client: genai.Client, model: LLMModel) -> None:
+        self.client = client
+        self.model = model
+    
+    def count(self, text: str) -> int:
+        response = self.client.models.count_tokens(
+            model=self.model.name,
+            contents=text,
+        )
+        return response.total_tokens or 0
+    
+    def parse(self, text: str) -> NoReturn:
+        raise self._unsupported()
+
+    def encode(self, *texts: str) -> NoReturn:
+        raise self._unsupported()
+    
+    def decode(self, ids: list[int]) -> NoReturn:
+        raise self._unsupported()
+    
+    def _unsupported(self) -> ConfigurationError:
+        raise ConfigurationError("Gemini does not support explicit tokenization")

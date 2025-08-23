@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator, Literal, cast
+from functools import cached_property
+from typing import Iterator, Literal, Sequence, cast
 
 import openai
 from openai.types.chat import (
@@ -35,11 +36,16 @@ from openai.types.chat.chat_completion_message_tool_call_param import (
 )
 from openai.types.shared_params import FunctionDefinition, ResponseFormatJSONObject
 from pydantic import BaseModel
+import tiktoken
 
 from llemon.sync.llm import LLM
+from llemon.sync.llm_model import LLMModel
 from llemon.apis.llm.llm_model_property import LLMModelProperty
+from llemon.sync.llm_tokenizer import LLMToken, LLMTokenizer
+
 from llemon.errors import Error
 from llemon.models.file import File
+from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
@@ -50,6 +56,7 @@ from llemon.utils.parallelize import parallelize
 
 FILE_IDS = "openai.file_ids"
 FILE_HASHES = "openai.file_hashes"
+ENCODINGS: dict[str, tiktoken.Encoding] = {}
 
 log = logging.getLogger(__name__)
 
@@ -81,6 +88,11 @@ class OpenAI(LLM):
         parallelize([(self._delete_file, (file_id,), {}) for file_id in state.pop(FILE_IDS, set())])
         state.pop(FILE_HASHES, None)
         super().cleanup(state)
+    
+    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
+        if model.name not in ENCODINGS:
+            ENCODINGS[model.name] = tiktoken.encoding_for_model(model.name)
+        return OpenAITokenizer(ENCODINGS[model.name])
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         return self._generate(request, GenerateResponse(request))
@@ -92,6 +104,38 @@ class OpenAI(LLM):
         if not request.model.config.supports_structured_output:
             return self._generate_json(request, GenerateObjectResponse(request))
         return self._generate_object(request, GenerateObjectResponse(request))
+    
+    def classify(self, request: ClassifyRequest) -> ClassifyResponse:
+        response = ClassifyResponse(request)
+        reasoning: str | None = None
+        if request.use_logit_biasing:
+            log.debug("classifying with logit biasing")
+            tokens = [str(i) for i in range(len(request.answers))]
+            token_ids = request.model.tokenizer.encode(*tokens)
+            if len(token_ids) != len(request.answers):
+                raise Error(f"can't do classification with {len(request.answers)} answers")
+            logit_bias = {str(token_id): 100 for token_id in token_ids}
+            generate_response = self._generate(request, GenerateResponse(request), logit_bias=logit_bias)
+            answer_num = int(generate_response.text)
+        elif request.model.config.supports_json:
+            log.debug("classifying with structured output")
+            generate_object_request = request.to_object_request()
+            generate_object_response = self._generate_object(generate_object_request, GenerateObjectResponse(generate_object_request))
+            data = generate_object_response.object.model_dump()
+            answer_num = cast(int, data["answer"])
+            reasoning = data.get("reasoning")
+        else:
+            log.debug("classifying with generated text")
+            generate_response = self._generate(request, GenerateResponse(request))
+            if not generate_response.text.isdigit():
+                raise Error(f"{self} failed to classify {request} (answer was not a number: {generate_response.text})")
+            answer_num = int(generate_response.text)
+        if not 0 <= answer_num < len(request.answers):
+            raise Error(f"{self} failed to classify {request} (answer number was out of range: {answer_num})")
+        answer = request.answers[answer_num]
+        log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
+        response.complete_answer(answer, reasoning)
+        return response
 
     def _upload_file(self, file: File, state: NS) -> None:
         if not file.data and file.is_image:
@@ -204,6 +248,7 @@ class OpenAI(LLM):
         response: GenerateResponse,
         messages: list[ChatCompletionMessageParam] | None = None,
         json: bool = False,
+        logit_bias: dict[str, int] | openai.NotGiven = openai.NOT_GIVEN,
     ) -> GenerateResponse:
         if messages is None:
             messages = self._messages(request)
@@ -215,7 +260,7 @@ class OpenAI(LLM):
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
                 temperature=_optional(request.temperature),
-                max_tokens=_optional(request.max_tokens),
+                max_completion_tokens=_optional(request.max_tokens),
                 n=_optional(request.variants),
                 seed=_optional(request.seed),
                 frequency_penalty=_optional(request.frequency_penalty),
@@ -223,6 +268,7 @@ class OpenAI(LLM):
                 top_p=_optional(request.top_p),
                 stop=_optional(request.stop),
                 response_format=response_format,
+                logit_bias=logit_bias,
             )
         except openai.APIError as error:
             raise Error(error)
@@ -251,7 +297,7 @@ class OpenAI(LLM):
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
                 temperature=_optional(request.temperature),
-                max_tokens=_optional(request.max_tokens),
+                max_completion_tokens=_optional(request.max_tokens),
                 seed=_optional(request.seed),
                 frequency_penalty=_optional(request.frequency_penalty),
                 presence_penalty=_optional(request.presence_penalty),
@@ -303,7 +349,7 @@ class OpenAI(LLM):
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
                 temperature=_optional(request.temperature),
-                max_tokens=_optional(request.max_tokens),
+                max_completion_tokens=_optional(request.max_tokens),
                 n=_optional(request.variants),
                 seed=_optional(request.seed),
                 frequency_penalty=_optional(request.frequency_penalty),
@@ -367,7 +413,7 @@ class OpenAI(LLM):
             return "required"
         return ChatCompletionNamedToolChoiceParam(
             type="function",
-            function={"name": request.tools_dict[request.use_tool].compatible_name},
+            function={"name": request.get_tool_name(request.use_tool)},
         )
 
     def _parse_choices(
@@ -379,6 +425,7 @@ class OpenAI(LLM):
             raise Error(f"no response from {self}")
         results: list[str] = []
         for choice in choices:
+            print(choice)
             self._check_finish_reason(choice, return_incomplete_message)
             tools = self._choice_tools(choice)
             if tools:
@@ -469,6 +516,50 @@ class OpenAI(LLM):
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))
         response.calls.extend(calls)
+
+
+class OpenAITokenizer(LLMTokenizer):
+
+    def __init__(self, encoding: tiktoken.Encoding) -> None:
+        self.encoding = encoding
+    
+    def count(self, text: str) -> int:
+        return len(self.encoding.encode(text))
+
+    def parse(self, text: str) -> Sequence[OpenAIToken]:
+        tokens: list[OpenAIToken] = []
+        token: OpenAIToken | None = None
+        for token_id in self.encoding.encode(text):
+            token = OpenAIToken(token_id, self.encoding, token)
+            tokens.append(token)
+        return tokens
+
+    def encode(self, *texts: str) -> list[int]:
+        ids: list[int] = []
+        for text in texts:
+            ids.extend(self.encoding.encode(text))
+        return ids
+
+    def decode(self, ids: list[int]) -> str:
+        return self.encoding.decode(ids)
+
+    
+class OpenAIToken(LLMToken):
+
+    def __init__(self, id: int, encoding: tiktoken.Encoding, prev: OpenAIToken | None) -> None:
+        super().__init__(id)
+        self._encoding = encoding
+        self._prev = prev
+    
+    @cached_property
+    def text(self) -> str:
+        return self._encoding.decode([self.id])
+    
+    @cached_property
+    def offset(self) -> int:
+        if self._prev is None:
+            return 0
+        return self._prev.offset + len(self._prev.text)
 
 
 def _optional[T](value: T | None) -> T | openai.NotGiven:

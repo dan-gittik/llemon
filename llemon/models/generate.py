@@ -144,9 +144,9 @@ class GenerateRequest(Request):
         output: list[str] = []
         user = USER if emoji else "User: "
         output.append(f"{user}{self.user_input}")
-        file = FILE if emoji else "File: "
+        file_ = FILE if emoji else "File: "
         for file in self.files:
-            output.append(f"{file}{file.name}")
+            output.append(f"{file_}{file.name}")
         return "\n".join(output)
 
     def dump(self) -> NS:

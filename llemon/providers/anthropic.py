@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncIterator, ClassVar, Literal, cast
+from typing import AsyncIterator, ClassVar, Literal, NoReturn, cast
 
 import anthropic
 from anthropic.types import (
@@ -25,8 +25,10 @@ from anthropic.types import (
 from pydantic import BaseModel
 
 from llemon.apis.llm.llm import LLM
+from llemon.apis.llm.llm_model import LLMModel
 from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.errors import Error
+from llemon.apis.llm.llm_tokenizer import LLMTokenizer
+from llemon.errors import ConfigurationError, Error
 from llemon.models.file import File
 from llemon.models.generate import GenerateRequest, GenerateResponse
 from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
@@ -53,6 +55,9 @@ class Anthropic(LLM):
 
     def __init__(self, api_key: str) -> None:
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
+    
+    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
+        return AnthropicTokenizer(self.client, model)
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         return await self._generate(request, GenerateResponse(request))
@@ -366,6 +371,32 @@ class Anthropic(LLM):
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))
         response.calls.extend(calls)
+
+
+class AnthropicTokenizer(LLMTokenizer):
+
+    def __init__(self, client: anthropic.AsyncAnthropic, model: LLMModel) -> None:
+        self.client = client
+        self.model = model
+    
+    async def count(self, text: str) -> int:
+        response = await self.client.messages.count_tokens(
+            model=self.model.name,
+            messages=[MessageParam(role="user", content=text)],
+        )
+        return response.input_tokens
+    
+    async def parse(self, text: str) -> NoReturn:
+        raise self._unsupported()
+
+    async def encode(self, *texts: str) -> NoReturn:
+        raise self._unsupported()
+    
+    async def decode(self, ids: list[int]) -> NoReturn:
+        raise self._unsupported()
+    
+    def _unsupported(self) -> ConfigurationError:
+        raise ConfigurationError("Anthropic does not support explicit tokenization")
 
 
 def _optional[T](value: T | None) -> T | anthropic.NotGiven:

@@ -8,11 +8,13 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from dotenv import dotenv_values
 from pydantic import BaseModel
 
+from llemon.apis.llm.llm_tokenizer import LLMTokenizer
 from llemon.apis.llm.llm_model_config import LLMModelConfig
 from llemon.errors import ConfigurationError
 from llemon.types import NS, History
 
 if TYPE_CHECKING:
+    from llemon.models.classify import ClassifyRequest, ClassifyResponse
     from llemon.models.generate import GenerateRequest, GenerateResponse
     from llemon.models.generate_object import (
         GenerateObjectRequest,
@@ -82,8 +84,12 @@ class LLM:
         knowledge_cutoff: dt.date | None = None,
         context_window: int | None = None,
         max_output_tokens: int | None = None,
+        supports_variants: bool | None = None,
         supports_streaming: bool | None = None,
+        supports_structured_output: bool | None = None,
         supports_json: bool | None = None,
+        supports_tools: bool | None = None,
+        supports_logit_biasing: bool | None = None,
         accepts_files: list[str] | None = None,
         cost_per_1m_input_tokens: float | None = None,
         cost_per_1m_output_tokens: float | None = None,
@@ -98,8 +104,12 @@ class LLM:
                 knowledge_cutoff=knowledge_cutoff,
                 context_window=context_window,
                 max_output_tokens=max_output_tokens,
+                supports_variants=supports_variants,
                 supports_streaming=supports_streaming,
+                supports_structured_output=supports_structured_output,
                 supports_json=supports_json,
+                supports_tools=supports_tools,
+                supports_logit_biasing=supports_logit_biasing,
                 accepts_files=accepts_files,
                 cost_per_1m_input_tokens=cost_per_1m_input_tokens,
                 cost_per_1m_output_tokens=cost_per_1m_output_tokens,
@@ -107,6 +117,9 @@ class LLM:
             config.load_defaults(name)
             self.models[name] = LLMModel(self, name, config)
         return self.models[name]
+    
+    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
+        raise NotImplementedError()
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         raise NotImplementedError()
@@ -115,6 +128,9 @@ class LLM:
         raise NotImplementedError()
 
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
+        raise NotImplementedError()
+    
+    async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
         raise NotImplementedError()
 
     async def prepare(self, request: GenerateRequest, state: NS) -> None:

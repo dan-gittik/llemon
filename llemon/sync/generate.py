@@ -12,6 +12,7 @@ from llemon.models.file import File
 from llemon.models.request import Request, Response
 from llemon.models.tool import Call, Tool, load_tool, resolve_tools
 from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.utils.concat import concat
 from llemon.utils.logs import ASSISTANT, FILE, TOOL, USER
 from llemon.sync.rendering import Rendering
 from llemon.utils.trim import trim
@@ -134,11 +135,18 @@ class GenerateRequest(Request):
                 self._instructions = self.instructions
         return self._instructions
 
-    def format(self) -> str:
+    def get_tool_name(self, tool: str) -> str:
+        if tool not in self.tools_dict:
+            raise ValueError(f"tool {tool!r} not found (available tools are {concat(self.tools_dict)})")
+        return self.tools_dict[tool].compatible_name
+
+    def format(self, emoji: bool = True) -> str:
         output: list[str] = []
-        output.append(f"{USER}{self.user_input}")
+        user = USER if emoji else "User: "
+        output.append(f"{user}{self.user_input}")
+        file_ = FILE if emoji else "File: "
         for file in self.files:
-            output.append(f"{FILE}{file.name}")
+            output.append(f"{file_}{file.name}")
         return "\n".join(output)
 
     def dump(self) -> NS:
@@ -251,12 +259,14 @@ class GenerateResponse(Response):
         self._selected = index
         self.__dict__.pop("text", None)
 
-    def format(self) -> str:
+    def format(self, emoji: bool = True) -> str:
         output: list[str] = []
+        tool = TOOL if emoji else "Tool: "
         for call in self.calls:
             result = call.result["error"] if "error" in call.result else call.result["return_value"]
-            output.append(f"{TOOL}{call.signature} -> {result}")
-        output.append(f"{ASSISTANT}{self.text}")
+            output.append(f"{tool}{call.signature} -> {result}")
+        assistant = ASSISTANT if emoji else "Assistant: "
+        output.append(f"{assistant}{self.text}")
         return "\n".join(output)
 
     @classmethod

@@ -96,14 +96,17 @@ def sync() -> None:
         "types.py",
         "llm.py",
         "llm_model.py",
+        "llm_tokenizer.py",
         "generate.py",
         "generate_stream.py",
         "generate_object.py",
+        "classify.py",
         "conversation.py",
         "openai.py",
         "anthropic.py",
         "gemini.py",
         "deepinfra.py",
+        "huggingface.py",
         "rendering.py",
     ]
     async_paths: list[pathlib.Path] = []

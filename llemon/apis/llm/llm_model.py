@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from functools import cached_property
 from typing import AsyncIterator, cast
 
 from pydantic import BaseModel
 
+from llemon.apis.llm.llm_tokenizer import LLMTokenizer
 from llemon.apis.llm.llm_model_config import LLMModelConfig
 from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.schema import schema_to_model
@@ -30,6 +32,10 @@ class LLMModel:
     def load(cls, data: NS) -> LLMModel:
         llm_class = LLM.classes[data["provider"]]
         return llm_class.model(data["name"], **(data.get("config") or {}))
+    
+    @cached_property
+    def tokenizer(self) -> LLMTokenizer:
+        return self.llm.get_tokenizer(self)
 
     def conversation(
         self,
@@ -188,6 +194,38 @@ class LLMModel:
         )
         async with self._standalone(request):
             return await self.llm.generate_object(request)
+    
+    async def classify(
+        self,
+        question: str,
+        answers: list[str] | type[bool],
+        user_input: str,
+        *,
+        reasoning: bool = False,
+        null_answer: bool = True,
+        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+    ) -> ClassifyResponse:
+        request = ClassifyRequest(
+            model=self,
+            question=question,
+            answers=answers,
+            user_input=user_input,
+            reasoning=reasoning,
+            null_answer=null_answer,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+        )
+        async with self._standalone(request):
+            return await self.llm.classify(request)
 
     def dump(self) -> NS:
         data: NS = dict(
@@ -216,6 +254,7 @@ class LLMModel:
 
 from llemon.apis.llm.llm import LLM
 from llemon.conversation import Conversation
+from llemon.models.classify import ClassifyRequest, ClassifyResponse
 from llemon.models.generate import GenerateRequest, GenerateResponse
 from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse

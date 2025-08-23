@@ -39,6 +39,7 @@ class Rendering:
             undefined=StrictUndefined,
         )
         self._env.tests.update(self.predicates)
+        self._env.globals.update(self.namespace)
         self._regex = re.compile(rf"{re.escape(open)}\s*!\s*(.*?){re.escape(close)}")
 
     def __str__(self) -> str:
@@ -91,7 +92,7 @@ class Rendering:
         return self.closing_brackets[self.bracket]
 
     def render(self, text: str, context_dict: dict[str, Any] | None = None, /, **context_kwargs: Any) -> str:
-        context = self.namespace | (context_dict or {}) | context_kwargs
+        context = (context_dict or {}) | context_kwargs
         if matches := list(self._regex.finditer(text)):
             ctx = {key: to_sync(value) if callable(value) else value for key, value in context.items()}
             expressions = [match.group(1) for match in matches]

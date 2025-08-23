@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import Any, ClassVar, override
+from typing import ClassVar
 
 from pydantic import BaseModel
 
+from llemon.sync.llm_model import LLMModel
 from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.types import NS
+from llemon.sync.types import NS, History, RenderArgument, FilesArgument, ToolsArgument
 from llemon.utils.schema import schema_to_model
 
 
@@ -15,9 +16,53 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
 
     JSON_INSTRUCTION: ClassVar[str] = "Answer ONLY in JSON that adheres EXACTLY to the following JSON schema: {schema}"
 
-    @override
-    def __init__(self, *, schema: type[T], **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(
+        self,
+        *,
+        model: LLMModel,
+        schema: type[T],
+        history: History | None = None,
+        instructions: str | None = None,
+        user_input: str | None = None,
+        context: NS | None = None,
+        render: RenderArgument | None = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument | None = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | NS | BaseModel | None = None,
+        return_incomplete_message: bool | None = None,
+    ) -> None:
+        super().__init__(
+            model=model,
+            history=history,
+            instructions=instructions,
+            user_input=user_input,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+            variants=variants,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            top_p=top_p,
+            top_k=top_k,
+            stop=stop,
+            prediction=prediction,
+            return_incomplete_message=return_incomplete_message,
+        )
         self.schema = schema
 
     def dump(self) -> NS:

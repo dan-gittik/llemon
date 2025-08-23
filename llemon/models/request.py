@@ -104,7 +104,7 @@ class Response:
     def complete(self) -> None:
         self.ended = now()
 
-    def format(self) -> str:
+    def format(self, emoji: bool = True) -> str:
         raise NotImplementedError()
 
     @classmethod

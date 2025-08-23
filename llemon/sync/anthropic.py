@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator, ClassVar, Literal, cast
+from typing import Iterator, ClassVar, Literal, NoReturn, cast
 
 import anthropic
 from anthropic.types import (
@@ -25,8 +25,10 @@ from anthropic.types import (
 from pydantic import BaseModel
 
 from llemon.sync.llm import LLM
+from llemon.sync.llm_model import LLMModel
 from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.errors import Error
+from llemon.sync.llm_tokenizer import LLMTokenizer
+from llemon.errors import ConfigurationError, Error
 from llemon.models.file import File
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
@@ -53,6 +55,9 @@ class Anthropic(LLM):
 
     def __init__(self, api_key: str) -> None:
         self.client = anthropic.Anthropic(api_key=api_key)
+    
+    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
+        return AnthropicTokenizer(self.client, model)
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         return self._generate(request, GenerateResponse(request))
@@ -340,7 +345,7 @@ class Anthropic(LLM):
             return ToolChoiceNoneParam(type="none")
         if request.use_tool is True:
             return ToolChoiceAnyParam(type="any")
-        return ToolChoiceToolParam(type="tool", name=request.use_tool)
+        return ToolChoiceToolParam(type="tool", name=request.get_tool_name(request.use_tool))
 
     def _check_stop_reason(
         self,
@@ -366,6 +371,32 @@ class Anthropic(LLM):
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))
         response.calls.extend(calls)
+
+
+class AnthropicTokenizer(LLMTokenizer):
+
+    def __init__(self, client: anthropic.Anthropic, model: LLMModel) -> None:
+        self.client = client
+        self.model = model
+    
+    def count(self, text: str) -> int:
+        response = self.client.messages.count_tokens(
+            model=self.model.name,
+            messages=[MessageParam(role="user", content=text)],
+        )
+        return response.input_tokens
+    
+    def parse(self, text: str) -> NoReturn:
+        raise self._unsupported()
+
+    def encode(self, *texts: str) -> NoReturn:
+        raise self._unsupported()
+    
+    def decode(self, ids: list[int]) -> NoReturn:
+        raise self._unsupported()
+    
+    def _unsupported(self) -> ConfigurationError:
+        raise ConfigurationError("Anthropic does not support explicit tokenization")
 
 
 def _optional[T](value: T | None) -> T | anthropic.NotGiven:

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Iterator, cast
 from pydantic import BaseModel
 
 from llemon.errors import FinishedError
+from llemon.models.classify import ClassifyRequest, ClassifyResponse
 from llemon.models.generate import GenerateRequest, GenerateResponse
 from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
@@ -366,6 +367,41 @@ class Conversation:
         )
         await self.llm.prepare(request, self._state)
         response = await self.llm.generate_object(request)
+        if save:
+            self.history.append((request, response))
+        return response
+    
+    async def classify(
+        self,
+        question: str,
+        answers: list[str] | type[bool],
+        user_input: str,
+        *,
+        save: bool = True,
+        reasoning: bool = False,
+        null_answer: bool = True,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+    ) -> ClassifyResponse:
+        self._assert_not_finished()
+        request = ClassifyRequest(
+            model=self.model,
+            question=question,
+            answers=answers,
+            user_input=user_input,
+            reasoning=reasoning,
+            null_answer=null_answer,
+            context=self.context | (context or {}),
+            render=render or self.rendering,
+            files=files,
+            tools=[*self.tools, *(tools or [])],
+            use_tool=use_tool,
+        )
+        await self.llm.prepare(request, self._state)
+        response = await self.llm.classify(request)
         if save:
             self.history.append((request, response))
         return response

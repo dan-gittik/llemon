@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Iterator, cast
 from pydantic import BaseModel
 
 from llemon.errors import FinishedError
+from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
@@ -206,11 +207,11 @@ class Conversation:
             return self.rendering.render(self.instructions, self.context)
         return self.instructions
 
-    def format(self, one_line: bool = False) -> str:
+    def format(self, one_line: bool = False, emoji: bool = True) -> str:
         interactions: list[str] = []
         for request, response in self.history:
-            interactions.append(request.format())
-            interactions.append(response.format())
+            interactions.append(request.format(emoji=emoji))
+            interactions.append(response.format(emoji=emoji))
         if one_line:
             interactions = [SPACES.sub(" ", interaction) for interaction in interactions]
             separator = " | "
@@ -366,6 +367,41 @@ class Conversation:
         )
         self.llm.prepare(request, self._state)
         response = self.llm.generate_object(request)
+        if save:
+            self.history.append((request, response))
+        return response
+    
+    def classify(
+        self,
+        question: str,
+        answers: list[str] | type[bool],
+        user_input: str,
+        *,
+        save: bool = True,
+        reasoning: bool = False,
+        null_answer: bool = True,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+    ) -> ClassifyResponse:
+        self._assert_not_finished()
+        request = ClassifyRequest(
+            model=self.model,
+            question=question,
+            answers=answers,
+            user_input=user_input,
+            reasoning=reasoning,
+            null_answer=null_answer,
+            context=self.context | (context or {}),
+            render=render or self.rendering,
+            files=files,
+            tools=[*self.tools, *(tools or [])],
+            use_tool=use_tool,
+        )
+        self.llm.prepare(request, self._state)
+        response = self.llm.classify(request)
         if save:
             self.history.append((request, response))
         return response
