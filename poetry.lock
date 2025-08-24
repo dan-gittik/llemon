@@ -1872,6 +1872,18 @@ pymysql = ["pymysql"]
 sqlcipher = ["sqlcipher3_binary"]
 
 [[package]]
+name = "srlz"
+version = "0.1.1"
+description = "A Customizable Serialization Framework"
+optional = false
+python-versions = ">=3.12"
+groups = ["main"]
+files = [
+    {file = "srlz-0.1.1-py3-none-any.whl", hash = "sha256:dbd0cef4fb70cc827e7ac0fb2a6591668a0090e714074b407a70ccfd9ad34a98"},
+    {file = "srlz-0.1.1.tar.gz", hash = "sha256:249c4325524a449f1bf8844f6bd10d07d3d01bb514a5c7bb1306b95e22007354"},
+]
+
+[[package]]
 name = "tenacity"
 version = "8.5.0"
 description = "Retry code until it succeeds"
@@ -2065,6 +2077,18 @@ video = ["av"]
 vision = ["Pillow (>=10.0.1,<=15.0)"]
 
 [[package]]
+name = "types-pyyaml"
+version = "6.0.12.20250822"
+description = "Typing stubs for PyYAML"
+optional = false
+python-versions = ">=3.9"
+groups = ["dev"]
+files = [
+    {file = "types_pyyaml-6.0.12.20250822-py3-none-any.whl", hash = "sha256:1fe1a5e146aa315483592d292b72a172b65b946a6d98aa6ddd8e4aa838ab7098"},
+    {file = "types_pyyaml-6.0.12.20250822.tar.gz", hash = "sha256:259f1d93079d335730a9db7cff2bcaf65d7e04b4a56b5927d49a612199b59413"},
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.14.1"
 description = "Backported and Experimental Type Hints for Python 3.9+"
@@ -2210,4 +2234,4 @@ files = [
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12"
-content-hash = "49096dabe16779ba312076fed0f9a2be4a79d24c8dffe33ab18266044b9f7d3e"
+content-hash = "2974a054b6f18efcd438b9ec666d29602a2bfee95ba3a23b05ab9b06595605b6"

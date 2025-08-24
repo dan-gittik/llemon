@@ -1,7 +1,7 @@
 from typing import cast
 
-from llemon.apis.llm.llm import LLM
-from llemon.apis.llm.llm_model import LLMModel
+from llemon.core.llm.llm import LLM
+from llemon.core.llm.llm_model import LLMModel
 
 
 class LLMModelProperty:

@@ -10,11 +10,11 @@ from pydantic import BaseModel
 from llemon.errors import ConfigurationError
 from llemon.models.file import File
 from llemon.models.request import Request, Response
-from llemon.models.tool import Call, Tool, load_tool, resolve_tools
+from llemon.models.tool import Call, Tool, resolve_tools
+from llemon.sync.rendering import Rendering
 from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.concat import concat
 from llemon.utils.logs import ASSISTANT, FILE, TOOL, USER
-from llemon.sync.rendering import Rendering
 from llemon.utils.trim import trim
 
 log = logging.getLogger(__name__)
@@ -76,7 +76,6 @@ class GenerateRequest(Request):
         self._user_input = user_input
         self._instructions: str | None = None
         self._return_incomplete_message = return_incomplete_message
-        self.context.update(request=self)
 
     def __str__(self) -> str:
         return f"{self.model}({self.user_input!r})"
@@ -130,7 +129,8 @@ class GenerateRequest(Request):
             if not self.instructions:
                 self._instructions = ""
             elif self.rendering:
-                self._instructions = self.rendering.render(self.instructions, self.context)
+                context = self.context | {"request": self}
+                self._instructions = self.rendering.render(self.instructions, context)
             else:
                 self._instructions = self.instructions
         return self._instructions
@@ -148,58 +148,6 @@ class GenerateRequest(Request):
         for file in self.files:
             output.append(f"{file_}{file.name}")
         return "\n".join(output)
-
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            model=self.model.dump(),
-            instructions=self._instructions,
-            user_input=self._user_input,
-            context=self.context or None,
-            render=self.rendering.bracket if self.rendering else None,
-            files=[file.dump() for file in self.files],
-            tools=[tool.dump() for tool in self.tools],
-            use_tool=self.use_tool,
-            variants=self.variants,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            seed=self.seed,
-            frequency_penalty=self.frequency_penalty,
-            presence_penalty=self.presence_penalty,
-            top_p=self.top_p,
-            top_k=self.top_k,
-            stop=self.stop,
-            prediction=self.prediction,
-            return_incomplete_message=self.return_incomplete_message,
-        )
-        data = {key: value for key, value in data.items() if value is not None}
-        return data
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        args.update(
-            model=LLMModel.load(data["model"]),
-            instructions=data.get("instructions"),
-            user_input=data.get("user_input"),
-            context=data.get("context"),
-            render=Rendering.resolve(data.get("render")),
-            files=[File.load(file) for file in data.get("files", [])],
-            tools=[load_tool(tool) for tool in data.get("tools", [])],
-            use_tool=data.get("use_tool"),
-            variants=data.get("variants"),
-            temperature=data.get("temperature"),
-            max_tokens=data.get("max_tokens"),
-            seed=data.get("seed"),
-            frequency_penalty=data.get("frequency_penalty"),
-            presence_penalty=data.get("presence_penalty"),
-            top_p=data.get("top_p"),
-            top_k=data.get("top_k"),
-            stop=data.get("stop"),
-            prediction=data.get("prediction"),
-            return_incomplete_message=data.get("return_incomplete_message"),
-        )
-        return args, attrs
 
     def _resolve_prediction(self, prediction: str | NS | BaseModel | None) -> str | None:
         if prediction is None:
@@ -240,15 +188,6 @@ class GenerateResponse(Response):
     def text(self) -> str:
         return self._texts[self._selected]
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            calls=[call.dump() for call in self.calls],
-            texts=self._texts,
-            selected=self._selected,
-        )
-        return data
-
     def complete_text(self, *texts: str) -> None:
         self._texts = [text.strip() for text in texts]
         super().complete()
@@ -268,16 +207,6 @@ class GenerateResponse(Response):
         assistant = ASSISTANT if emoji else "Assistant: "
         output.append(f"{assistant}{self.text}")
         return "\n".join(output)
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        attrs.update(
-            calls=[Call.load(call) for call in data["calls"]],
-            _texts=data["texts"],
-            _selected=data["selected"],
-        )
-        return args, attrs
 
 
 from llemon.sync.llm_model import LLMModel

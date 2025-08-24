@@ -5,11 +5,10 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llemon.sync.llm_model import LLMModel
 from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.types import NS, History, RenderArgument, FilesArgument, ToolsArgument
-from llemon.utils.schema import schema_to_model
+from llemon.sync.llm_model import LLMModel
+from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 
 
 class GenerateObjectRequest[T: BaseModel](GenerateRequest):
@@ -65,13 +64,6 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
         )
         self.schema = schema
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            schema=self.schema.model_json_schema(),
-        )
-        return data
-
     def append_json_instruction(self) -> None:
         self.append_instruction(self.JSON_INSTRUCTION.format(schema=self.schema.model_json_schema()))
 
@@ -79,14 +71,6 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
         super().check_supported()
         if not self.model.config.supports_json:
             raise ConfigurationError(f"{self.model} doesn't support structured output")
-
-    @classmethod
-    def _restore(cls, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        args.update(
-            schema=schema_to_model(data["schema"]),
-        )
-        return args, attrs
 
 
 class GenerateObjectResponse[T: BaseModel](GenerateResponse):
@@ -117,19 +101,3 @@ class GenerateObjectResponse[T: BaseModel](GenerateResponse):
     def complete_object(self, *objects: T) -> None:
         self._objects = list(objects)
         super().complete_text(*[object.model_dump_json() for object in objects])
-
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            objects=[object.model_dump() for object in self.objects],
-        )
-        return data
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        request: GenerateObjectRequest[BaseModel] = args["request"]
-        attrs.update(
-            _objects=[request.schema.model_validate(object) for object in data["objects"]],
-        )
-        return args, attrs

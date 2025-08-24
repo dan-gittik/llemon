@@ -2,12 +2,11 @@ from __future__ import annotations
 
 import openai
 
-from llemon.apis.llm.llm_model import LLMModel
-from llemon.apis.llm.llm_tokenizer import LLMTokenizer
-from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.providers.openai import OpenAI
+from llemon.core.llm.llm_model import LLMModel
+from llemon.core.llm.llm_model_property import LLMModelProperty
+from llemon.core.llm.llm_tokenizer import LLMTokenizer
 from llemon.providers.huggingface import HuggingFaceTokenizer
-
+from llemon.providers.openai import OpenAI
 
 
 class DeepInfra(OpenAI):

@@ -7,8 +7,8 @@ from typing import AsyncIterator, cast
 
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm_tokenizer import LLMTokenizer
-from llemon.apis.llm.llm_model_config import LLMModelConfig
+from llemon.core.llm.llm_model_config import LLMModelConfig
+from llemon.core.llm.llm_tokenizer import LLMTokenizer
 from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.schema import schema_to_model
 
@@ -28,11 +28,6 @@ class LLMModel:
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    @classmethod
-    def load(cls, data: NS) -> LLMModel:
-        llm_class = LLM.classes[data["provider"]]
-        return llm_class.model(data["name"], **(data.get("config") or {}))
-    
     @cached_property
     def tokenizer(self) -> LLMTokenizer:
         return self.llm.get_tokenizer(self)
@@ -194,7 +189,7 @@ class LLMModel:
         )
         async with self._standalone(request):
             return await self.llm.generate_object(request)
-    
+
     async def classify(
         self,
         question: str,
@@ -227,16 +222,6 @@ class LLMModel:
         async with self._standalone(request):
             return await self.llm.classify(request)
 
-    def dump(self) -> NS:
-        data: NS = dict(
-            provider=self.llm.__class__.__name__,
-            name=self.name,
-        )
-        config = self.config.dump(self.name)
-        if config:
-            data["config"] = config
-        return data
-
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:
             return None, message1
@@ -252,8 +237,8 @@ class LLMModel:
             await self.llm.cleanup(state)
 
 
-from llemon.apis.llm.llm import LLM
 from llemon.conversation import Conversation
+from llemon.core.llm.llm import LLM
 from llemon.models.classify import ClassifyRequest, ClassifyResponse
 from llemon.models.generate import GenerateRequest, GenerateResponse
 from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse

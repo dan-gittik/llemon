@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from functools import cached_property
 import re
+from functools import cached_property
 from typing import Any, Callable, ClassVar
 
 from jinja2 import Environment, StrictUndefined, pass_context
@@ -86,7 +86,7 @@ class Rendering:
 
         cls.predicates[function.__name__] = test
         return function
-    
+
     @cached_property
     def closing_bracket(self) -> str:
         return self.closing_brackets[self.bracket]
@@ -100,7 +100,7 @@ class Rendering:
             output: list[str] = []
             offset = 0
             for match, evaluation in zip(matches, evaluations):
-                output.append(text[offset:match.start()])
+                output.append(text[offset : match.start()])
                 output.append(str(evaluation))
                 offset = match.end()
             output.append(text[offset:])

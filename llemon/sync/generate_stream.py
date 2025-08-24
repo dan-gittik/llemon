@@ -5,7 +5,6 @@ from typing import Iterator
 
 from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.types import NS
 from llemon.utils.now import now
 
 
@@ -46,25 +45,8 @@ class GenerateStreamResponse(GenerateResponse):
             raise self._incomplete_request()
         return self._ttft or 0.0
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            chunks=self._chunks,
-            ttft=self.ttft,
-        )
-        return data
-
     def complete_stream(self) -> None:
         super().complete_text("".join(self._chunks))
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        attrs.update(
-            _chunks=data["chunks"],
-            _ttft=data["ttft"],
-        )
-        return args, attrs
 
 
 class StreamDelta:

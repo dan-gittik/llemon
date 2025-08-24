@@ -9,9 +9,9 @@ from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
     FinishReason,
-    FunctionDeclaration,
     FunctionCallingConfig,
     FunctionCallingConfigMode,
+    FunctionDeclaration,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
@@ -24,10 +24,10 @@ from google.genai.types import (
 )
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm import LLM
-from llemon.apis.llm.llm_model import LLMModel
-from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.apis.llm.llm_tokenizer import LLMTokenizer
+from llemon.core.llm.llm import LLM
+from llemon.core.llm.llm_model import LLMModel
+from llemon.core.llm.llm_model_property import LLMModelProperty
+from llemon.core.llm.llm_tokenizer import LLMTokenizer
 from llemon.errors import ConfigurationError, Error
 from llemon.models.file import File
 from llemon.models.generate import GenerateRequest, GenerateResponse
@@ -64,7 +64,7 @@ class Gemini(LLM):
             self.client = genai.Client(api_key=api_key)
         else:
             self.client = genai.Client(project=project, location=location, vertexai=True)
-    
+
     def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
         return GeminiTokenizer(self.client, model)
 
@@ -345,22 +345,22 @@ class GeminiTokenizer(LLMTokenizer):
     def __init__(self, client: genai.Client, model: LLMModel) -> None:
         self.client = client
         self.model = model
-    
+
     async def count(self, text: str) -> int:
         response = await self.client.aio.models.count_tokens(
             model=self.model.name,
             contents=text,
         )
         return response.total_tokens or 0
-    
+
     async def parse(self, text: str) -> NoReturn:
         raise self._unsupported()
 
     async def encode(self, *texts: str) -> NoReturn:
         raise self._unsupported()
-    
+
     async def decode(self, ids: list[int]) -> NoReturn:
         raise self._unsupported()
-    
+
     def _unsupported(self) -> ConfigurationError:
         raise ConfigurationError("Gemini does not support explicit tokenization")

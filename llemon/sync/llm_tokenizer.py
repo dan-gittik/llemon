@@ -22,13 +22,13 @@ class LLMToken:
 
     def __init__(self, id: int):
         self.id = id
-    
+
     def __str__(self) -> str:
         return self.text
-    
+
     def __repr__(self) -> str:
         return f"<token {self.id}: {self.text}>"
-    
+
     @property
     def text(self) -> str:
         raise NotImplementedError()

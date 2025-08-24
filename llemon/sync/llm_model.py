@@ -7,8 +7,8 @@ from typing import Iterator, cast
 
 from pydantic import BaseModel
 
+from llemon.core.llm.llm_model_config import LLMModelConfig
 from llemon.sync.llm_tokenizer import LLMTokenizer
-from llemon.apis.llm.llm_model_config import LLMModelConfig
 from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.schema import schema_to_model
 
@@ -28,11 +28,6 @@ class LLMModel:
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    @classmethod
-    def load(cls, data: NS) -> LLMModel:
-        llm_class = LLM.classes[data["provider"]]
-        return llm_class.model(data["name"], **(data.get("config") or {}))
-    
     @cached_property
     def tokenizer(self) -> LLMTokenizer:
         return self.llm.get_tokenizer(self)
@@ -194,7 +189,7 @@ class LLMModel:
         )
         with self._standalone(request):
             return self.llm.generate_object(request)
-    
+
     def classify(
         self,
         question: str,
@@ -227,16 +222,6 @@ class LLMModel:
         with self._standalone(request):
             return self.llm.classify(request)
 
-    def dump(self) -> NS:
-        data: NS = dict(
-            provider=self.llm.__class__.__name__,
-            name=self.name,
-        )
-        config = self.config.dump(self.name)
-        if config:
-            data["config"] = config
-        return data
-
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:
             return None, message1
@@ -252,9 +237,9 @@ class LLMModel:
             self.llm.cleanup(state)
 
 
-from llemon.sync.llm import LLM
-from llemon.sync.conversation import Conversation
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
+from llemon.sync.conversation import Conversation
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.sync.llm import LLM

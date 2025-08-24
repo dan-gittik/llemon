@@ -8,8 +8,8 @@ from typing import TYPE_CHECKING, Any, ClassVar
 from dotenv import dotenv_values
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm_tokenizer import LLMTokenizer
-from llemon.apis.llm.llm_model_config import LLMModelConfig
+from llemon.core.llm.llm_model_config import LLMModelConfig
+from llemon.core.llm.llm_tokenizer import LLMTokenizer
 from llemon.errors import ConfigurationError
 from llemon.types import NS, History
 
@@ -101,6 +101,7 @@ class LLM:
         if name not in self.models:
             log.debug("creating model %s", name)
             config = LLMModelConfig(
+                name=name,
                 knowledge_cutoff=knowledge_cutoff,
                 context_window=context_window,
                 max_output_tokens=max_output_tokens,
@@ -114,10 +115,10 @@ class LLM:
                 cost_per_1m_input_tokens=cost_per_1m_input_tokens,
                 cost_per_1m_output_tokens=cost_per_1m_output_tokens,
             )
-            config.load_defaults(name)
+            config.load_defaults()
             self.models[name] = LLMModel(self, name, config)
         return self.models[name]
-    
+
     def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
         raise NotImplementedError()
 
@@ -129,7 +130,7 @@ class LLM:
 
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
         raise NotImplementedError()
-    
+
     async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
         raise NotImplementedError()
 
@@ -149,4 +150,4 @@ class LLM:
             log.debug(response.format(), extra=extra)
 
 
-from llemon.apis.llm.llm_model import LLMModel
+from llemon.core.llm.llm_model import LLMModel

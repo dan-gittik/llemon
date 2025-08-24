@@ -108,6 +108,7 @@ def sync() -> None:
         "deepinfra.py",
         "huggingface.py",
         "rendering.py",
+        "serialization.py",
     ]
     async_paths: list[pathlib.Path] = []
     for path in (ROOT / PACKAGE).rglob("*.py"):

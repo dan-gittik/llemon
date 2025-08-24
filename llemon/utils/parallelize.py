@@ -1,6 +1,6 @@
 import asyncio
-from concurrent.futures import Future, ThreadPoolExecutor, wait
 import inspect
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Callable
 
 from llemon.utils.concat import concat

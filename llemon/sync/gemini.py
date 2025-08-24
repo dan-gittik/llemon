@@ -9,9 +9,9 @@ from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
     FinishReason,
-    FunctionDeclaration,
     FunctionCallingConfig,
     FunctionCallingConfigMode,
+    FunctionDeclaration,
     GenerateContentConfig,
     GenerateContentResponse,
     HttpOptions,
@@ -24,16 +24,16 @@ from google.genai.types import (
 )
 from pydantic import BaseModel
 
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model import LLMModel
-from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.sync.llm_tokenizer import LLMTokenizer
+from llemon.core.llm.llm_model_property import LLMModelProperty
 from llemon.errors import ConfigurationError, Error
 from llemon.models.file import File
+from llemon.models.tool import Call
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.tool import Call
+from llemon.sync.llm import LLM
+from llemon.sync.llm_model import LLMModel
+from llemon.sync.llm_tokenizer import LLMTokenizer
 from llemon.sync.types import NS, ToolCalls
 from llemon.utils.logs import ASSISTANT, SYSTEM, USER
 
@@ -64,7 +64,7 @@ class Gemini(LLM):
             self.client = genai.Client(api_key=api_key)
         else:
             self.client = genai.Client(project=project, location=location, vertexai=True)
-    
+
     def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
         return GeminiTokenizer(self.client, model)
 
@@ -345,22 +345,22 @@ class GeminiTokenizer(LLMTokenizer):
     def __init__(self, client: genai.Client, model: LLMModel) -> None:
         self.client = client
         self.model = model
-    
+
     def count(self, text: str) -> int:
         response = self.client.models.count_tokens(
             model=self.model.name,
             contents=text,
         )
         return response.total_tokens or 0
-    
+
     def parse(self, text: str) -> NoReturn:
         raise self._unsupported()
 
     def encode(self, *texts: str) -> NoReturn:
         raise self._unsupported()
-    
+
     def decode(self, ids: list[int]) -> NoReturn:
         raise self._unsupported()
-    
+
     def _unsupported(self) -> ConfigurationError:
         raise ConfigurationError("Gemini does not support explicit tokenization")

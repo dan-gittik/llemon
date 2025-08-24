@@ -3,13 +3,13 @@ from __future__ import annotations
 from functools import cached_property
 from typing import ClassVar
 
-from llemon.sync.llm_model import LLMModel
 from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest
-from llemon.sync.types import NS, History, RenderArgument, FilesArgument, ToolsArgument
-from llemon.utils.trim import trim
+from llemon.sync.llm_model import LLMModel
+from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.schema import schema_to_model
+from llemon.utils.trim import trim
 
 
 class ClassifyRequest(GenerateRequest):
@@ -42,7 +42,7 @@ class ClassifyRequest(GenerateRequest):
             files=files,
             tools=tools,
             use_tool=use_tool,
-            # temperature=0.0,
+            temperature=0.0,
             seed=0,
         )
         if answers is bool:
@@ -68,7 +68,7 @@ class ClassifyRequest(GenerateRequest):
         super().check_supported()
         if self.reasoning and not self.model.config.supports_json:
             raise ConfigurationError(f"{self.model} doesn't support reasoning in classification")
-    
+
     def to_object_request(self) -> GenerateObjectRequest:
         properties = {
             "answer": {
@@ -105,7 +105,8 @@ class ClassifyRequest(GenerateRequest):
             appendix = "Add the reasoning behind your decision."
         else:
             appendix = "Do not add any other text, formatting or punctuation."
-        return trim(f"""
+        return trim(
+            f"""
         You are an expert classifier.
         Given a classification task in the form of a question, and a list of labels in the form of numbered answers,
         respond to each user input by answering the question about it with the most appropriate answer's NUMBER ONLY.
@@ -116,7 +117,8 @@ class ClassifyRequest(GenerateRequest):
 
         # Answers
         {"\n".join(f"{i}. {answer}" for i, answer in enumerate(self.answers))}
-        """)
+        """
+        )
 
 
 class ClassifyResponse(GenerateResponse):
@@ -131,15 +133,6 @@ class ClassifyResponse(GenerateResponse):
     def __str__(self) -> str:
         return f"{self.request.model}: {self.answer}"
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            answer=self.answer,
-        )
-        if self.reasoning:
-            data["reasoning"] = self.reasoning
-        return data
-
     def complete_answer(self, answer: str, reasoning: str | None = None) -> None:
         self.answer = answer
         self.reasoning = reasoning
@@ -147,12 +140,3 @@ class ClassifyResponse(GenerateResponse):
         if reasoning:
             text = f"{text} ({reasoning})"
         super().complete_text(text)
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        attrs.update(
-            answer=data["answer"],
-            reasoning=data.get("reasoning"),
-        )
-        return args, attrs

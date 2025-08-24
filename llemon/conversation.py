@@ -8,19 +8,14 @@ from typing import TYPE_CHECKING, Iterator, cast
 from pydantic import BaseModel
 
 from llemon.errors import FinishedError
-from llemon.models.classify import ClassifyRequest, ClassifyResponse
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.request import Request, Response
-from llemon.models.tool import Tool, Toolbox, load_tool, resolve_tools
+from llemon.models.tool import resolve_tools
 from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils.parallelize import async_parallelize
 from llemon.utils.rendering import Rendering
 from llemon.utils.schema import schema_to_model
 
 if TYPE_CHECKING:
-    from llemon.apis.llm.llm import LLM
+    from llemon.core.llm.llm import LLM
 
 SPACES = re.compile(r"\s+")
 
@@ -90,85 +85,14 @@ class Conversation:
 
     @classmethod
     def load(cls, data: NS) -> Conversation:
-        history: History = []
-        models: dict[str, NS] = data.get("models", {})
-        files: dict[str, NS] = data.get("files", {})
-        tools: dict[str, Tool | Toolbox] = {}
-        for tool in data.get("tools", []):
-            loaded = load_tool(tool)
-            if isinstance(loaded, Toolbox):
-                tools[loaded.name] = loaded
-                for tool in loaded.tools:
-                    tools[tool.name] = tool
-            else:
-                tools[loaded.name] = loaded
-        conversation = data["conversation"]
-        for interaction in conversation["history"]:
-            request_data = interaction["request"]
-            if "model" in request_data:
-                request_data["model"] = models[request_data["model"]]
-            if "files" in request_data:
-                request_data["files"] = [files[name] for name in request_data["files"]]
-            if "tools" in request_data:
-                request_data["tools"] = [tools[name] for name in request_data["tools"]]
-            request = Request.load(request_data)
-            response_data = interaction["response"]
-            for call in response_data.get("calls", []):
-                call["tool"] = tools[call["tool"]]
-            response_data["request"] = request
-            response = Response.load(response_data)
-            response.request.history = history
-            history.append((response.request, response))
-        conversation_model = data["models"][conversation["model"]]
-        conversation_tools = [tools[name] for name in conversation.get("tools", [])]
-        return cls(
-            model=LLMModel.load(conversation_model),
-            instructions=conversation.get("instructions"),
-            context=conversation.get("context"),
-            render=Rendering.resolve(conversation.get("render")),
-            tools=conversation_tools,
-            history=history,
-        )
+        return load(Conversation, data)
 
     @property
     def llm(self) -> LLM:
         return self.model.llm
-    
+
     def dump(self) -> NS:
-        models = {self.model.name: self.model.dump()}
-        tools = {tool.name: tool.dump() for tool in self.tools}
-        files: dict[str, NS] = {}
-        history: list[NS] = []
-        for _, response in self.history:
-            response_data = response.dump()
-            for call in response_data.get("calls", []):
-                call["tool"] = call["tool"]["name"]
-            request_data = response_data.pop("request")
-            if "model" in request_data:
-                model_name = request_data["model"]["name"]
-                models[model_name] = request_data["model"]
-                request_data["model"] = model_name
-            if "files" in request_data:
-                files.update({file["name"]: file for file in request_data["files"]})
-                request_data["files"] = [file["name"] for file in request_data["files"]]
-            if "tools" in request_data:
-                tools.update({tool["name"]: tool for tool in request_data["tools"]})
-                request_data["tools"] = [tool["name"] for tool in request_data["tools"]]
-            history.append({"request": request_data, "response": response_data})
-        conversation = dict(
-            model=self.model.name,
-            instructions=self.instructions,
-            context=self.context or None,
-            render=self.rendering.bracket if self.rendering else False,
-            tools=[tool.name for tool in self.tools],
-            history=history,
-        )
-        return dict(
-            conversation=conversation,
-            models=models,
-            tools=list(tools.values()),
-            files=files,
-        )
+        return dump(self)
 
     def replace(
         self,
@@ -199,7 +123,7 @@ class Conversation:
         if cleanup:
             await self.llm.cleanup(self._state)
         self.finished = True
-    
+
     async def render_instructions(self) -> str:
         if self.instructions is None:
             return ""
@@ -370,7 +294,7 @@ class Conversation:
         if save:
             self.history.append((request, response))
         return response
-    
+
     async def classify(
         self,
         question: str,
@@ -411,4 +335,10 @@ class Conversation:
             raise FinishedError(f"{self!r} has already finished")
 
 
-from llemon.apis.llm.llm_model import LLMModel
+from llemon.core.llm.llm_model import LLMModel
+from llemon.models.classify import ClassifyRequest, ClassifyResponse
+from llemon.models.generate import GenerateRequest, GenerateResponse
+from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.models.request import Request, Response
+from llemon.serialization import dump, load

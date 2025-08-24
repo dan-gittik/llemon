@@ -6,6 +6,7 @@ from functools import cached_property
 from typing import Iterator, Literal, Sequence, cast
 
 import openai
+import tiktoken
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionContentPartParam,
@@ -36,20 +37,18 @@ from openai.types.chat.chat_completion_message_tool_call_param import (
 )
 from openai.types.shared_params import FunctionDefinition, ResponseFormatJSONObject
 from pydantic import BaseModel
-import tiktoken
 
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model import LLMModel
-from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.sync.llm_tokenizer import LLMToken, LLMTokenizer
-
+from llemon.core.llm.llm_model_property import LLMModelProperty
 from llemon.errors import Error
 from llemon.models.file import File
+from llemon.models.tool import Call
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.tool import Call
+from llemon.sync.llm import LLM
+from llemon.sync.llm_model import LLMModel
+from llemon.sync.llm_tokenizer import LLMToken, LLMTokenizer
 from llemon.sync.types import NS, ToolCalls, ToolDeltas, ToolStream
 from llemon.utils.logs import ASSISTANT, SYSTEM, USER
 from llemon.utils.parallelize import parallelize
@@ -88,7 +87,7 @@ class OpenAI(LLM):
         parallelize([(self._delete_file, (file_id,), {}) for file_id in state.pop(FILE_IDS, set())])
         state.pop(FILE_HASHES, None)
         super().cleanup(state)
-    
+
     def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
         if model.name not in ENCODINGS:
             ENCODINGS[model.name] = tiktoken.encoding_for_model(model.name)
@@ -104,7 +103,7 @@ class OpenAI(LLM):
         if not request.model.config.supports_structured_output:
             return self._generate_json(request, GenerateObjectResponse(request))
         return self._generate_object(request, GenerateObjectResponse(request))
-    
+
     def classify(self, request: ClassifyRequest) -> ClassifyResponse:
         response = ClassifyResponse(request)
         reasoning: str | None = None
@@ -120,7 +119,9 @@ class OpenAI(LLM):
         elif request.model.config.supports_json:
             log.debug("classifying with structured output")
             generate_object_request = request.to_object_request()
-            generate_object_response = self._generate_object(generate_object_request, GenerateObjectResponse(generate_object_request))
+            generate_object_response = self._generate_object(
+                generate_object_request, GenerateObjectResponse(generate_object_request)
+            )
             data = generate_object_response.object.model_dump()
             answer_num = cast(int, data["answer"])
             reasoning = data.get("reasoning")
@@ -522,7 +523,7 @@ class OpenAITokenizer(LLMTokenizer):
 
     def __init__(self, encoding: tiktoken.Encoding) -> None:
         self.encoding = encoding
-    
+
     def count(self, text: str) -> int:
         return len(self.encoding.encode(text))
 
@@ -543,18 +544,18 @@ class OpenAITokenizer(LLMTokenizer):
     def decode(self, ids: list[int]) -> str:
         return self.encoding.decode(ids)
 
-    
+
 class OpenAIToken(LLMToken):
 
     def __init__(self, id: int, encoding: tiktoken.Encoding, prev: OpenAIToken | None) -> None:
         super().__init__(id)
         self._encoding = encoding
         self._prev = prev
-    
+
     @cached_property
     def text(self) -> str:
         return self._encoding.decode([self.id])
-    
+
     @cached_property
     def offset(self) -> int:
         if self._prev is None:

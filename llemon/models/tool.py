@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from functools import cached_property
-import importlib
 import inspect
 import json
 import logging
@@ -32,6 +30,7 @@ class Tool:
         description: str,
         parameters: NS,
         function: Callable[..., Any] | None = None,
+        toolbox: Toolbox | None = None,
     ) -> None:
         if function is None:
             function = self._not_runnable
@@ -39,6 +38,7 @@ class Tool:
         self.description = description
         self.parameters = parameters
         self.function = function
+        self.toolbox = toolbox
         self.compatible_name = self.name.rsplit(".", 1)[-1]
         self.printable_name = self.name.rsplit("__", 1)[0]
 
@@ -57,34 +57,6 @@ class Tool:
             parameters=parameters,
             function=function,
         )
-
-    @classmethod
-    def load(cls, tool: NS | Tool) -> Tool:
-        if isinstance(tool, Tool):
-            return tool
-        function = tool.get("function")
-        if function:
-            module, function = function.rsplit(".", 1)
-            module = importlib.import_module(module)
-            function = getattr(module, function)
-        else:
-            function = None
-        return cls(
-            name=tool["name"],
-            description=tool["description"],
-            parameters=tool["parameters"],
-            function=function,
-        )
-
-    def dump(self) -> NS:
-        data = dict(
-            name=self.name,
-            description=self.description,
-            parameters=self.parameters,
-        )
-        if self.function is not self._not_runnable:
-            data["function"] = f"{self.function.__module__}.{self.function.__name__}"
-        return data
 
     @classmethod
     def _not_runnable(self, *args, **kwargs: Any) -> NoReturn:
@@ -119,17 +91,6 @@ class Call:
 
     def __repr__(self) -> str:
         return f"<{self}>"
-
-    @classmethod
-    def load(cls, data: NS) -> Call:
-        result = data["result"]
-        return cls(
-            id=data["id"],
-            tool=Tool.load(data["tool"]),
-            arguments=data["arguments"],
-            return_value=result.get("return_value", undefined),
-            error=result.get("error"),
-        )
 
     @classmethod
     def get_executor(cls) -> ThreadPoolExecutor:
@@ -197,14 +158,6 @@ class Call:
             result["return_value"] = return_value
         return json.dumps(result)
 
-    def dump(self) -> NS:
-        return {
-            "id": self.id,
-            "tool": self.tool.dump(),
-            "arguments": self.arguments,
-            "result": self.result,
-        }
-
     def run(self) -> None:
         log.debug("running %s", self.signature)
         try:
@@ -236,7 +189,6 @@ class Call:
 
 class Toolbox:
 
-    classes: ClassVar[dict[str, type[Toolbox]]] = {}
     tool_suffix: ClassVar[str] = "_tool"
     description_suffix: ClassVar[str] = "_description"
     render_prefix: ClassVar[str] = "render_"
@@ -245,18 +197,6 @@ class Toolbox:
         self.name = name
         self._suffix = _suffix()
         self._init: dict[str, Any] = {}
-    
-    def __init_subclass__(cls) -> None:
-        cls.classes[cls.__name__] = cls
-    
-    @classmethod
-    def load(cls, data: NS | Toolbox) -> Toolbox:
-        if isinstance(data, Toolbox):
-            return data
-        toolbox_class = cls.classes[data["type"]]
-        toolbox = toolbox_class(**data["init"])
-        toolbox._suffix = data.get("suffix", _suffix())
-        return toolbox
 
     @property
     def tool_names(self) -> list[str]:
@@ -265,7 +205,7 @@ class Toolbox:
             if attribute.endswith(self.tool_suffix):
                 tool_names.append(attribute.removesuffix(self.tool_suffix))
         return tool_names
-    
+
     @property
     def render_names(self) -> list[str]:
         render_names = []
@@ -285,7 +225,7 @@ class Toolbox:
             else:
                 description = function.__doc__ or ""
             parameters = _parse_parameters(function)
-            tool = Tool(f"{self.name}.{name}{self._suffix}", description, parameters, function)
+            tool = Tool(f"{self.name}.{name}{self._suffix}", description, parameters, function, self)
             tools.append(tool)
         return tools
 
@@ -296,14 +236,6 @@ class Toolbox:
             function = getattr(self, f"{self.render_prefix}{name}")
             renders[name] = function
         return renders
-    
-    def dump(self) -> NS:
-        return dict(
-            type=self.__class__.__name__,
-            name=self.name,
-            init=self._init,
-            suffix=self._suffix,
-        )
 
 
 def resolve_tools(tools: ToolsArgument) -> list[Tool | Toolbox]:
@@ -316,16 +248,6 @@ def resolve_tools(tools: ToolsArgument) -> list[Tool | Toolbox]:
         else:
             resolved.append(tool)
     return resolved
-
-
-def load_tool(tool: NS | Tool | Toolbox) -> Tool | Toolbox:
-    if isinstance(tool, Tool):
-        return tool
-    if isinstance(tool, Toolbox):
-        return Toolbox.load(tool)
-    if "type" in tool:
-        return Toolbox.load(tool)
-    return Tool.load(tool)
 
 
 def _parse_parameters(function: Callable[..., Any]) -> NS:
