@@ -9,11 +9,8 @@ from llemon.sync import (
     Gemini,
     LLMModel,
     OpenAI,
-    enable_logs,
     errors,
 )
-
-enable_logs()
 
 
 @pytest.fixture(
