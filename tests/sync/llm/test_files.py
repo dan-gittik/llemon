@@ -1,6 +1,6 @@
 import pytest
 
-from llemon import LLMModel
+from llemon.sync import LLMModel
 
 
 def test_generate_with_file(model: LLMModel, example_assets):
