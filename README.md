@@ -1275,7 +1275,6 @@ Install the project with development dependencies:
 
 ```sh
 $ poetry install --with dev
-$ pre-commit install
 ...
 ```
 
