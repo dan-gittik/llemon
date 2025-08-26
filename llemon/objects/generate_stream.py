@@ -3,10 +3,9 @@ from __future__ import annotations
 from functools import cached_property
 from typing import AsyncIterator
 
-from llemon.errors import ConfigurationError
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.types import NS
-from llemon.utils.now import now
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.types import Error
+from llemon.utils import now
 
 
 class GenerateStreamRequest(GenerateRequest):
@@ -14,7 +13,7 @@ class GenerateStreamRequest(GenerateRequest):
     def check_supported(self) -> None:
         super().check_supported()
         if not self.model.config.supports_streaming:
-            raise ConfigurationError(f"{self.model} doesn't support streaming")
+            raise Error(f"{self.model} doesn't support streaming")
 
 
 class GenerateStreamResponse(GenerateResponse):
@@ -46,25 +45,8 @@ class GenerateStreamResponse(GenerateResponse):
             raise self._incomplete_request()
         return self._ttft or 0.0
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            chunks=self._chunks,
-            ttft=self.ttft,
-        )
-        return data
-
     def complete_stream(self) -> None:
         super().complete_text("".join(self._chunks))
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        attrs.update(
-            _chunks=data["chunks"],
-            _ttft=data["ttft"],
-        )
-        return args, attrs
 
 
 class StreamDelta:

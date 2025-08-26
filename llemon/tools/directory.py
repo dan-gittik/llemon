@@ -1,6 +1,6 @@
 import pathlib
 
-from llemon.models.tool import Toolbox
+from llemon.objects.tool import Toolbox
 
 
 class Directory(Toolbox):
@@ -54,7 +54,7 @@ class Directory(Toolbox):
         """
         for path in paths:
             self._path(path).unlink()
-    
+
     def render_file(self, path: str) -> str:
         return self._path(path).read_text()
 

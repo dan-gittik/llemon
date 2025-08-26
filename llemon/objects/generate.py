@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from functools import cached_property
-from typing import ClassVar, Self
+from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llemon.errors import ConfigurationError
-from llemon.models.file import File
-from llemon.models.request import Request, Response
-from llemon.models.tool import Call, Tool, load_tool, resolve_tools
-from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.concat import concat
-from llemon.utils.logs import ASSISTANT, FILE, TOOL, USER
-from llemon.utils.rendering import Rendering
-from llemon.utils.trim import trim
+from llemon.objects.file import File
+from llemon.objects.rendering import Rendering
+from llemon.objects.request import Request, Response
+from llemon.objects.tool import Call, Tool, resolve_tools
+from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument, Warning
+from llemon.utils import ASSISTANT, FILE, TOOL, USER, concat, trim
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +41,7 @@ class GenerateRequest(Request):
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -69,6 +68,7 @@ class GenerateRequest(Request):
         self.seed = seed
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
+        self.repetition_penalty = repetition_penalty
         self.top_p = top_p
         self.top_k = top_k
         self.stop = stop
@@ -76,7 +76,6 @@ class GenerateRequest(Request):
         self._user_input = user_input
         self._instructions: str | None = None
         self._return_incomplete_message = return_incomplete_message
-        self.context.update(request=self)
 
     def __str__(self) -> str:
         return f"{self.model}({self.user_input!r})"
@@ -107,15 +106,23 @@ class GenerateRequest(Request):
         return self._return_incomplete_message
 
     def check_supported(self) -> None:
-        if self.variants is not None and not self.model.config.supports_variants:
-            raise ConfigurationError(f"{self.model} doesn't support multiple responses")
+        for parameter in self.model.config.unsupported_parameters or []:
+            if getattr(self, parameter, None) is not None:
+                warnings.warn(f"{self.model} doesn't support {parameter}", Warning)
+                setattr(self, parameter, None)
         if self.tools and not self.model.config.supports_tools:
-            raise ConfigurationError(f"{self.model} doesn't support tools")
+            warnings.warn(f"{self.model} doesn't support tools", Warning)
+            self.tools = []
+        accepted_files = []
         for file in self.files:
             if not self.model.config.accepts_files:
-                raise ConfigurationError(f"{self.model} doesn't support files")
+                warnings.warn(f"{self.model} doesn't support files", Warning)
+                break
             if file.mimetype not in self.model.config.accepts_files:
-                raise ConfigurationError(f"{self.model} doesn't support {file.mimetype} files ({file})")
+                warnings.warn(f"{self.model} doesn't support {file.mimetype} files ({file})", Warning)
+            else:
+                accepted_files.append(file)
+        self.files = accepted_files
 
     def append_instruction(self, instruction: str) -> None:
         instruction = trim(instruction)
@@ -130,7 +137,8 @@ class GenerateRequest(Request):
             if not self.instructions:
                 self._instructions = ""
             elif self.rendering:
-                self._instructions = await self.rendering.render(self.instructions, self.context)
+                context = self.context | {"request": self}
+                self._instructions = await self.rendering.render(self.instructions, context)
             else:
                 self._instructions = self.instructions
         return self._instructions
@@ -144,62 +152,10 @@ class GenerateRequest(Request):
         output: list[str] = []
         user = USER if emoji else "User: "
         output.append(f"{user}{self.user_input}")
-        file = FILE if emoji else "File: "
+        file_ = FILE if emoji else "File: "
         for file in self.files:
-            output.append(f"{file}{file.name}")
+            output.append(f"{file_}{file.name}")
         return "\n".join(output)
-
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            model=self.model.dump(),
-            instructions=self._instructions,
-            user_input=self._user_input,
-            context=self.context or None,
-            render=self.rendering.bracket if self.rendering else None,
-            files=[file.dump() for file in self.files],
-            tools=[tool.dump() for tool in self.tools],
-            use_tool=self.use_tool,
-            variants=self.variants,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            seed=self.seed,
-            frequency_penalty=self.frequency_penalty,
-            presence_penalty=self.presence_penalty,
-            top_p=self.top_p,
-            top_k=self.top_k,
-            stop=self.stop,
-            prediction=self.prediction,
-            return_incomplete_message=self.return_incomplete_message,
-        )
-        data = {key: value for key, value in data.items() if value is not None}
-        return data
-
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        args.update(
-            model=LLMModel.load(data["model"]),
-            instructions=data.get("instructions"),
-            user_input=data.get("user_input"),
-            context=data.get("context"),
-            render=Rendering.resolve(data.get("render")),
-            files=[File.load(file) for file in data.get("files", [])],
-            tools=[load_tool(tool) for tool in data.get("tools", [])],
-            use_tool=data.get("use_tool"),
-            variants=data.get("variants"),
-            temperature=data.get("temperature"),
-            max_tokens=data.get("max_tokens"),
-            seed=data.get("seed"),
-            frequency_penalty=data.get("frequency_penalty"),
-            presence_penalty=data.get("presence_penalty"),
-            top_p=data.get("top_p"),
-            top_k=data.get("top_k"),
-            stop=data.get("stop"),
-            prediction=data.get("prediction"),
-            return_incomplete_message=data.get("return_incomplete_message"),
-        )
-        return args, attrs
 
     def _resolve_prediction(self, prediction: str | NS | BaseModel | None) -> str | None:
         if prediction is None:
@@ -210,11 +166,6 @@ class GenerateRequest(Request):
             return json.dumps(prediction)
         except TypeError:
             return str(prediction)
-
-    def _copy(self) -> Self:
-        request = super()._copy()
-        request.files = [file._copy() for file in self.files]
-        return request
 
 
 class GenerateResponse(Response):
@@ -240,15 +191,6 @@ class GenerateResponse(Response):
     def text(self) -> str:
         return self._texts[self._selected]
 
-    def dump(self) -> NS:
-        data = super().dump()
-        data.update(
-            calls=[call.dump() for call in self.calls],
-            texts=self._texts,
-            selected=self._selected,
-        )
-        return data
-
     def complete_text(self, *texts: str) -> None:
         self._texts = [text.strip() for text in texts]
         super().complete()
@@ -269,15 +211,5 @@ class GenerateResponse(Response):
         output.append(f"{assistant}{self.text}")
         return "\n".join(output)
 
-    @classmethod
-    def _restore(self, data: NS) -> tuple[NS, NS]:
-        args, attrs = super()._restore(data)
-        attrs.update(
-            calls=[Call.load(call) for call in data["calls"]],
-            _texts=data["texts"],
-            _selected=data["selected"],
-        )
-        return args, attrs
 
-
-from llemon.apis.llm.llm_model import LLMModel
+from llemon.genai.llm_model import LLMModel

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from functools import cached_property
 import re
+from functools import cached_property
 from typing import Any, Callable, ClassVar
 
 from jinja2 import Environment, StrictUndefined, pass_context
@@ -39,6 +39,7 @@ class Rendering:
             undefined=StrictUndefined,
         )
         self._env.tests.update(self.predicates)
+        self._env.globals.update(self.namespace)
         self._regex = re.compile(rf"{re.escape(open)}\s*!\s*(.*?){re.escape(close)}")
 
     def __str__(self) -> str:
@@ -85,13 +86,13 @@ class Rendering:
 
         cls.predicates[function.__name__] = test
         return function
-    
+
     @cached_property
     def closing_bracket(self) -> str:
         return self.closing_brackets[self.bracket]
 
     def render(self, text: str, context_dict: dict[str, Any] | None = None, /, **context_kwargs: Any) -> str:
-        context = self.namespace | (context_dict or {}) | context_kwargs
+        context = (context_dict or {}) | context_kwargs
         if matches := list(self._regex.finditer(text)):
             ctx = {key: to_sync(value) if callable(value) else value for key, value in context.items()}
             expressions = [match.group(1) for match in matches]
@@ -99,7 +100,7 @@ class Rendering:
             output: list[str] = []
             offset = 0
             for match, evaluation in zip(matches, evaluations):
-                output.append(text[offset:match.start()])
+                output.append(text[offset : match.start()])
                 output.append(str(evaluation))
                 offset = match.end()
             output.append(text[offset:])

@@ -3,25 +3,12 @@ from __future__ import annotations
 import datetime as dt
 import inspect
 import logging
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import Any, ClassVar
 
 from dotenv import dotenv_values
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm_model_config import LLMModelConfig
-from llemon.errors import ConfigurationError
-from llemon.types import NS, History
-
-if TYPE_CHECKING:
-    from llemon.models.generate import GenerateRequest, GenerateResponse
-    from llemon.models.generate_object import (
-        GenerateObjectRequest,
-        GenerateObjectResponse,
-    )
-    from llemon.models.generate_stream import (
-        GenerateStreamRequest,
-        GenerateStreamResponse,
-    )
+from llemon.types import NS, Error, History
 
 log = logging.getLogger(__name__)
 
@@ -70,7 +57,7 @@ class LLM:
             elif parameter.default is not parameter.empty:
                 value = parameter.default
             else:
-                raise ConfigurationError(f"{cls.__name__} missing configuration {parameter.name!r}")
+                raise Error(f"{cls.__name__} missing configuration {parameter.name!r}")
             kwargs[parameter.name] = value
         return cls(**kwargs)
 
@@ -79,13 +66,19 @@ class LLM:
         cls,
         name: str,
         *,
+        tokenizer: str | None = None,
         knowledge_cutoff: dt.date | None = None,
         context_window: int | None = None,
         max_output_tokens: int | None = None,
+        unsupported_parameters: list[str] | None = None,
         supports_streaming: bool | None = None,
+        supports_structured_output: bool | None = None,
         supports_json: bool | None = None,
+        supports_tools: bool | None = None,
+        supports_logit_biasing: bool | None = None,
         accepts_files: list[str] | None = None,
         cost_per_1m_input_tokens: float | None = None,
+        cost_per_1m_cache_tokens: float | None = None,
         cost_per_1m_output_tokens: float | None = None,
     ) -> LLMModel:
         if not cls.instance:
@@ -95,18 +88,28 @@ class LLM:
         if name not in self.models:
             log.debug("creating model %s", name)
             config = LLMModelConfig(
+                name=name,
+                tokenizer=tokenizer,
                 knowledge_cutoff=knowledge_cutoff,
                 context_window=context_window,
                 max_output_tokens=max_output_tokens,
+                unsupported_parameters=unsupported_parameters,
                 supports_streaming=supports_streaming,
+                supports_structured_output=supports_structured_output,
                 supports_json=supports_json,
+                supports_tools=supports_tools,
+                supports_logit_biasing=supports_logit_biasing,
                 accepts_files=accepts_files,
                 cost_per_1m_input_tokens=cost_per_1m_input_tokens,
+                cost_per_1m_cache_tokens=cost_per_1m_cache_tokens,
                 cost_per_1m_output_tokens=cost_per_1m_output_tokens,
             )
-            config.load_defaults(name)
+            config.load_defaults()
             self.models[name] = LLMModel(self, name, config)
         return self.models[name]
+
+    async def count_tokens(self, request: GenerateRequest) -> int:
+        raise NotImplementedError()
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         raise NotImplementedError()
@@ -115,6 +118,9 @@ class LLM:
         raise NotImplementedError()
 
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
+        raise NotImplementedError()
+
+    async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
         raise NotImplementedError()
 
     async def prepare(self, request: GenerateRequest, state: NS) -> None:
@@ -133,4 +139,9 @@ class LLM:
             log.debug(response.format(), extra=extra)
 
 
-from llemon.apis.llm.llm_model import LLMModel
+from llemon.genai.llm_model import LLMModel
+from llemon.genai.llm_model_config import LLMModelConfig
+from llemon.objects.classify import ClassifyRequest, ClassifyResponse
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse

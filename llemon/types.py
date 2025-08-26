@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+import builtins
 import pathlib
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
-    from llemon.models.file import File
-    from llemon.models.request import Request, Response
-    from llemon.models.tool import Call, Tool, Toolbox
-    from llemon.utils.rendering import Rendering
+    from llemon.objects.file import File
+    from llemon.objects.request import Request, Response
+    from llemon.objects.tool import Call, Tool, Toolbox
+    from llemon.objects.rendering import Rendering
 
 type NS = dict[str, Any]
 type FilesArgument = Sequence[str | pathlib.Path | tuple[str, bytes] | File] | None
@@ -19,3 +20,11 @@ type History = list[Interaction]
 type ToolCalls = list[tuple[str, str, NS]]
 type ToolStream = dict[int, tuple[str, str, list[str]]]
 type ToolDeltas = list[tuple[int, str, str, str]]
+
+
+class Error(Exception):
+    pass
+
+
+class Warning(builtins.Warning):
+    pass

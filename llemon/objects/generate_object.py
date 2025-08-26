@@ -5,8 +5,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 
 
 class GenerateObjectRequest[T: BaseModel](GenerateRequest):
@@ -103,4 +103,4 @@ class GenerateObjectResponse[T: BaseModel](GenerateResponse):
         super().complete_text(*[object.model_dump_json() for object in objects])
 
 
-from llemon.sync.llm_model import LLMModel
+from llemon.genai.llm_model import LLMModel

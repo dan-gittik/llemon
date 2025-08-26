@@ -44,6 +44,7 @@ async def main():
             use_tool=False,
         )
     dump = conv.dump()
+    import pprint; pprint.pprint(dump)
     print(json.dumps(dump, indent=2))
     async with Conversation.load(dump) as conv:
         print(conv.format())

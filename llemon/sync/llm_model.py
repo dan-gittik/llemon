@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import logging
 from contextlib import contextmanager
+from functools import cached_property
 from typing import Iterator, cast
 
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm_model_config import LLMModelConfig
 from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.schema import schema_to_model
+from llemon.utils import schema_to_model
 
 log = logging.getLogger(__name__)
 
@@ -26,10 +26,10 @@ class LLMModel:
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    @classmethod
-    def load(cls, data: NS) -> LLMModel:
-        llm_class = LLM.classes[data["provider"]]
-        return llm_class.model(data["name"], **(data.get("config") or {}))
+    @cached_property
+    def tokenizer(self) -> LLMTokenizer:
+        tokenizer_class = LLMTokenizer.get(self.config.tokenizer)
+        return tokenizer_class(self)
 
     def conversation(
         self,
@@ -59,6 +59,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -82,6 +83,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -108,6 +110,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -130,6 +133,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -157,6 +161,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         prediction: T | NS | None = None,
@@ -182,6 +187,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             prediction=prediction,
@@ -189,15 +195,37 @@ class LLMModel:
         with self._standalone(request):
             return self.llm.generate_object(request)
 
-    def dump(self) -> NS:
-        data: NS = dict(
-            provider=self.llm.__class__.__name__,
-            name=self.name,
+    def classify(
+        self,
+        question: str,
+        answers: list[str] | type[bool],
+        user_input: str,
+        *,
+        reasoning: bool = False,
+        null_answer: bool = True,
+        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+    ) -> ClassifyResponse:
+        request = ClassifyRequest(
+            model=self,
+            question=question,
+            answers=answers,
+            user_input=user_input,
+            reasoning=reasoning,
+            null_answer=null_answer,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
         )
-        config = self.config.dump(self.name)
-        if config:
-            data["config"] = config
-        return data
+        with self._standalone(request):
+            return self.llm.classify(request)
 
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:
@@ -214,8 +242,11 @@ class LLMModel:
             self.llm.cleanup(state)
 
 
-from llemon.sync.llm import LLM
 from llemon.sync.conversation import Conversation
+from llemon.sync.llm import LLM
+from llemon.genai.llm_model_config import LLMModelConfig
+from llemon.sync.llm_tokenizer import LLMTokenizer
+from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse

@@ -10,7 +10,7 @@ from functools import cached_property
 
 import httpx
 
-from llemon.types import NS, FilesArgument
+from llemon.types import FilesArgument
 
 DATA_URL_PATTERN = re.compile(r"^data:([^;]+);base64,(.*)$")
 
@@ -25,12 +25,11 @@ class File:
         mimetype: str,
         data: bytes | None = None,
         url: str | None = None,
-        id: str | None = None,
     ) -> None:
         self.name = name
         self.mimetype = mimetype
         self.data = data
-        self.id = id
+        self.id: str | None = None
         self._url = url
 
     def __str__(self) -> str:
@@ -61,16 +60,16 @@ class File:
         return resolved
 
     @classmethod
-    def from_url(cls, url: str, name: str | None = None, id: str | None = None) -> File:
+    def from_url(cls, url: str, name: str | None = None) -> File:
         if name is None:
             name = url.rsplit("/", 1)[-1]
         if match := DATA_URL_PATTERN.match(url):
             mimetype, base64_ = match.groups()
-            file = cls(name, mimetype, base64.b64decode(base64_), url=url, id=id)
+            file = cls(name, mimetype, base64.b64decode(base64_), url=url)
             log.debug("created %s from data URL", file)
         else:
             mimetype = cls.get_mimetype(url)
-            file = cls(name, mimetype, url=url, id=id)
+            file = cls(name, mimetype, url=url)
             log.debug("created %s from URL %s", file, url)
         return file
 
@@ -100,10 +99,6 @@ class File:
         file = cls(name, mimetype, data)
         log.debug("created %s from data", file)
         return file
-
-    @classmethod
-    def load(cls, data: NS) -> File:
-        return cls.from_url(data["url"], name=data["name"], id=data.get("id"))
 
     @classmethod
     def get_mimetype(cls, path: str) -> str:
@@ -145,13 +140,6 @@ class File:
     def is_video(self) -> bool:
         return self.mimetype.startswith("video/")
 
-    def dump(self) -> NS:
-        return {
-            "name": self.name,
-            "url": self.url,
-            "id": self.id,
-        }
-
     def fetch(self) -> None:
         if self.data:
             return
@@ -166,6 +154,3 @@ class File:
         async with httpx.AsyncClient() as client:
             response = await client.get(self.url)
             self.data = response.content
-
-    def _copy(self) -> File:
-        return self.__class__(self.name, self.mimetype, self.data, self.url)

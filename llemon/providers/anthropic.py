@@ -24,18 +24,16 @@ from anthropic.types import (
 )
 from pydantic import BaseModel
 
-from llemon.apis.llm.llm import LLM
-from llemon.apis.llm.llm_model_property import LLMModelProperty
-from llemon.errors import Error
-from llemon.models.file import File
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.tool import Call, Tool
-from llemon.types import NS, ToolCalls, ToolStream
-from llemon.utils.logs import ASSISTANT, SYSTEM, USER
+from llemon.genai.llm import LLM
+from llemon.genai.llm_model_property import LLMModelProperty
+from llemon.objects.file import File
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.objects.tool import Call, Tool
+from llemon.types import NS, Error, ToolCalls, ToolStream
+from llemon.utils import ASSISTANT, SYSTEM, USER
 
-STRUCTURED_OUTPUT = "structured_output"
 log = logging.getLogger(__name__)
 
 
@@ -53,6 +51,14 @@ class Anthropic(LLM):
 
     def __init__(self, api_key: str) -> None:
         self.client = anthropic.AsyncAnthropic(api_key=api_key)
+
+    async def count_tokens(self, request: GenerateRequest) -> int:
+        messages = await self._messages(request)
+        response = await self.client.messages.count_tokens(
+            model=request.model.name,
+            messages=messages,
+        )
+        return response.input_tokens
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         return await self._generate(request, GenerateResponse(request))
@@ -186,6 +192,7 @@ class Anthropic(LLM):
             )
         except anthropic.APIError as error:
             raise Error(error)
+        request.id = anthropic_response.id
         self._check_stop_reason(anthropic_response.stop_reason, request.return_incomplete_message)
         texts: list[str] = []
         tools: ToolCalls = []
@@ -214,7 +221,7 @@ class Anthropic(LLM):
             messages = await self._messages(request)
         try:
             instructions = await request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
-            result = self.client.messages.stream(
+            anthropic_response = self.client.messages.stream(
                 model=request.model.name,
                 messages=messages,
                 max_tokens=request.max_tokens or request.model.config.max_output_tokens or self.default_max_tokens,
@@ -231,7 +238,8 @@ class Anthropic(LLM):
 
         async def stream() -> AsyncIterator[str]:
             tool_stream: ToolStream = {}
-            async with result as events:
+            async with anthropic_response as events:
+                request.id = events.request_id
                 async for event in events:
                     if event.type == "message_delta":
                         self._check_stop_reason(event.delta.stop_reason, request.return_incomplete_message)
@@ -298,6 +306,7 @@ class Anthropic(LLM):
             )
         except anthropic.APIError as error:
             raise Error(error)
+        request.id = anthropic_response.id
         self._check_stop_reason(anthropic_response.stop_reason, return_incomplete_messages=False)
         object: NS = {}
         tools: ToolCalls = []
@@ -317,7 +326,7 @@ class Anthropic(LLM):
         return response
 
     def _tools(self, request: GenerateRequest) -> list[ToolParam] | anthropic.NotGiven:
-        if not request.tools:
+        if not request.tools_dict:
             return anthropic.NOT_GIVEN
         tools: list[ToolParam] = []
         for tool in request.tools_dict.values():

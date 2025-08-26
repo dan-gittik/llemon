@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import openai
 
-from llemon.apis.llm.llm_model_property import LLMModelProperty
+from llemon.genai.llm_model_property import LLMModelProperty
 from llemon.providers.openai import OpenAI
 
 

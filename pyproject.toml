@@ -16,6 +16,10 @@ dependencies = [
     "jinja2 (>=3.1.6,<4.0.0)",
     "rich (>=14.1.0,<15.0.0)",
     "sqlalchemy (>=2.0.43,<3.0.0)",
+    "tiktoken (>=0.11.0,<0.12.0)",
+    "transformers (>=4.55.4,<5.0.0)",
+    "pyyaml (>=6.0.2,<7.0.0)",
+    "srlz (>=0.1.1,<0.2.0)",
 ]
 
 [tool.poetry.group.dev.dependencies]
@@ -31,6 +35,7 @@ dotenv = "^0.9.9"
 uvicorn = "^0.35.0"
 pytest-asyncio = "^1.1.0"
 pytest-xdist = "^3.8.0"
+types-pyyaml = "^6.0.12.20250822"
 
 [tool.poe.tasks]
 run = "python dev.py run"

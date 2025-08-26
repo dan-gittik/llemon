@@ -75,7 +75,7 @@ def lint(paths: list[str]) -> None:
         targets.extend([ROOT / PACKAGE, ROOT / "tests"])
     for target in targets:
         _execute("black", f"--line-length={LINE_LENGTH}", target)
-        _execute("isort", "--profile=black", target)
+        _execute("isort", f"-w {LINE_LENGTH}", "--profile=black", target)
         _execute("flake8", f"--max-line-length={LINE_LENGTH}", "--extend-ignore=E203,E402", target)
 
 
@@ -96,15 +96,19 @@ def sync() -> None:
         "types.py",
         "llm.py",
         "llm_model.py",
+        "llm_tokenizer.py",
         "generate.py",
         "generate_stream.py",
         "generate_object.py",
+        "classify.py",
         "conversation.py",
         "openai.py",
         "anthropic.py",
         "gemini.py",
         "deepinfra.py",
+        "huggingface.py",
         "rendering.py",
+        "serialization.py",
     ]
     async_paths: list[pathlib.Path] = []
     for path in (ROOT / PACKAGE).rglob("*.py"):

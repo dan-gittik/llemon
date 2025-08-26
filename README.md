@@ -990,12 +990,9 @@ rest of is rendered. An implementation of such a function might look like:
 >>> Rendering.function
 ... async def is_distressed(request):
 ...     request.context["user_is_distressed"] = await request.model.classify(
-...         f"""
-...         Given the following conversation:
-...         {request.history[-3:].format(emoji=False)}
-...         Would you say the the user is distressed?
-...         """,
-...         answers=["yes", "no"],
+...         "Is the user distressed?",
+...         ["yes", "no"],
+...         request.history[-3:].format(emoji=False),
 ...     ) == "yes"
 ...     return ""
 ```
