@@ -3,9 +3,9 @@ from __future__ import annotations
 from functools import cached_property
 from typing import Iterator
 
-from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.utils.now import now
+from llemon.sync.types import Error
+from llemon.utils import now
 
 
 class GenerateStreamRequest(GenerateRequest):
@@ -13,7 +13,7 @@ class GenerateStreamRequest(GenerateRequest):
     def check_supported(self) -> None:
         super().check_supported()
         if not self.model.config.supports_streaming:
-            raise ConfigurationError(f"{self.model} doesn't support streaming")
+            raise Error(f"{self.model} doesn't support streaming")
 
 
 class GenerateStreamResponse(GenerateResponse):

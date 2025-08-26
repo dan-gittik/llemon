@@ -12,10 +12,8 @@ from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 
 from pydantic import BaseModel, ConfigDict
 
-from llemon.errors import Error, InProgressError
-from llemon.types import NS, ToolsArgument
-from llemon.utils.logs import TOOL
-from llemon.utils.trim import trim
+from llemon.types import NS, Error, ToolsArgument
+from llemon.utils import TOOL, trim
 
 log = logging.getLogger(__name__)
 PARAMETER_SCHEMAS: dict[Callable[..., Any], NS] = {}
@@ -180,8 +178,8 @@ class Call:
             self._error = self._format_error(error)
             log.debug(TOOL + "%s raised %r", self.signature, self._error)
 
-    def _incomplete_call(self) -> InProgressError:
-        return InProgressError(f"{self} didn't run yet")
+    def _incomplete_call(self) -> Error:
+        return Error(f"{self} didn't run yet")
 
     def _format_error(self, error: Exception) -> str:
         return "".join(traceback.format_exception(error.__class__, error, error.__traceback__))

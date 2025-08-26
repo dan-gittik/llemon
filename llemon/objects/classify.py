@@ -3,13 +3,10 @@ from __future__ import annotations
 from functools import cached_property
 from typing import ClassVar
 
-from llemon.core.llm.llm_model import LLMModel
-from llemon.errors import ConfigurationError
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest
-from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.schema import schema_to_model
-from llemon.utils.trim import trim
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest
+from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.utils import schema_to_model, trim
 
 
 class ClassifyRequest(GenerateRequest):
@@ -67,7 +64,7 @@ class ClassifyRequest(GenerateRequest):
     def check_supported(self) -> None:
         super().check_supported()
         if self.reasoning and not self.model.config.supports_json:
-            raise ConfigurationError(f"{self.model} doesn't support reasoning in classification")
+            raise Error(f"{self.model} doesn't support reasoning in classification")
 
     def to_object_request(self) -> GenerateObjectRequest:
         properties = {
@@ -140,3 +137,6 @@ class ClassifyResponse(GenerateResponse):
         if reasoning:
             text = f"{text} ({reasoning})"
         super().complete_text(text)
+
+
+from llemon.genai.llm_model import LLMModel

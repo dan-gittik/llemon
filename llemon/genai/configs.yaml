@@ -17,7 +17,12 @@ gpt-5:
   knowledge_cutoff: 2024-10-01
   context_window: 400000
   max_output_tokens: 128000
-  supports_variants: true
+  unsupported_parameters:
+    - temperature
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -36,7 +41,12 @@ gpt-5-mini:
   knowledge_cutoff: 2024-05-31
   context_window: 400000
   max_output_tokens: 128000
-  supports_variants: true
+  unsupported_parameters:
+    - temperature
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -55,7 +65,12 @@ gpt-5-nano:
   knowledge_cutoff: 2024-05-31
   context_window: 400000
   max_output_tokens: 128000
-  supports_variants: true
+  unsupported_parameters:
+    - temperature
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -71,10 +86,13 @@ gpt-5-nano:
   cost_per_1m_output_tokens: 0.4
 
 gpt-4.1:
+  tokenizer: tiktoken
   knowledge_cutoff: 2024-06-01
   context_window: 1047576
   max_output_tokens: 32768
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -90,10 +108,13 @@ gpt-4.1:
   cost_per_1m_output_tokens: 8.0
 
 gpt-4.1-mini:
+  tokenizer: tiktoken
   knowledge_cutoff: 2024-06-01
   context_window: 1047576
   max_output_tokens: 32768
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -109,10 +130,13 @@ gpt-4.1-mini:
   cost_per_1m_output_tokens: 0.4
 
 gpt-4.1-nano:
+  tokenizer: tiktoken
   knowledge_cutoff: 2024-06-01
   context_window: 1047576
   max_output_tokens: 32768
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -128,10 +152,13 @@ gpt-4.1-nano:
   cost_per_1m_output_tokens: 0.4
 
 gpt-4o:
+  tokenizer: tiktoken
   knowledge_cutoff: 2023-10-01
   context_window: 128000
   max_output_tokens: 16384
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -147,10 +174,13 @@ gpt-4o:
   cost_per_1m_output_tokens: 10.0
 
 gpt-4o-mini:
+  tokenizer: tiktoken
   knowledge_cutoff: 2023-10-01
   context_window: 128000
   max_output_tokens: 16384
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - top_k
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -170,7 +200,13 @@ claude-opus-4-1:
   knowledge_cutoff: 2025-03-01
   context_window: 200000
   max_output_tokens: 32000
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -190,7 +226,13 @@ claude-opus-4-0:
   knowledge_cutoff: 2025-03-01
   context_window: 200000
   max_output_tokens: 32000
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -210,7 +252,13 @@ claude-sonnet-4-0:
   knowledge_cutoff: 2025-03-01
   context_window: 200000
   max_output_tokens: 64000
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -230,7 +278,13 @@ claude-3-7-sonnet-latest:
   knowledge_cutoff: 2024-11-01
   context_window: 200000
   max_output_tokens: 64000
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -250,7 +304,13 @@ claude-3-5-haiku-latest:
   knowledge_cutoff: 2024-07-01
   context_window: 200000
   max_output_tokens: 8192
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -270,7 +330,13 @@ claude-3-haiku-20240307:
   knowledge_cutoff: 2023-08-01
   context_window: 200000
   max_output_tokens: 4096
-  supports_variants: false
+  unsupported_parameters:
+    - variants
+    - seed
+    - frequency_penalty
+    - presence_penalty
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -291,7 +357,9 @@ gemini-2.5-pro:
   knowledge_cutoff: 2025-01-01
   context_window: 1048576
   max_output_tokens: 65536
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -315,7 +383,9 @@ gemini-2.5-flash:
   knowledge_cutoff: 2025-01-01
   context_window: 1048576
   max_output_tokens: 65536
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -339,7 +409,9 @@ gemini-2.5-flash-lite:
   knowledge_cutoff: 2025-01-01
   context_window: 1048576
   max_output_tokens: 65536
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -363,7 +435,9 @@ gemini-2.0-flash:
   knowledge_cutoff: 2024-08-01
   context_window: 1048576
   max_output_tokens: 8192
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -387,7 +461,9 @@ gemini-2.0-flash-lite:
   knowledge_cutoff: 2024-08-01
   context_window: 1048576
   max_output_tokens: 8192
-  supports_variants: true
+  unsupported_parameters:
+    - repetition_penalty
+    - prediction
   supports_streaming: true
   supports_structured_output: true
   supports_json: true
@@ -408,10 +484,13 @@ gemini-2.0-flash-lite:
 
 # DeepInfra Models
 meta-llama/Meta-Llama-3.1-70B-Instruct:
+  tokenizer: hf
   knowledge_cutoff: 2023-12-01
   context_window: 128000
   max_output_tokens: 2048
-  supports_variants: true
+  unsupported_parameters:
+    - top_k
+    - prediction
   supports_streaming: true
   supports_structured_output: false
   supports_json: true
@@ -422,10 +501,13 @@ meta-llama/Meta-Llama-3.1-70B-Instruct:
   cost_per_1m_output_tokens: 0.4
 
 meta-llama/Meta-Llama-3.1-8B-Instruct:
+  tokenizer: hf
   knowledge_cutoff: 2023-12-01
   context_window: 128000
   max_output_tokens: 2048
-  supports_variants: true
+  unsupported_parameters:
+    - top_k
+    - prediction
   supports_streaming: true
   supports_structured_output: false
   supports_json: true

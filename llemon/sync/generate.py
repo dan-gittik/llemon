@@ -2,20 +2,18 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from functools import cached_property
-from typing import ClassVar, Self
+from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llemon.errors import ConfigurationError
-from llemon.models.file import File
-from llemon.models.request import Request, Response
-from llemon.models.tool import Call, Tool, resolve_tools
+from llemon.objects.file import File
 from llemon.sync.rendering import Rendering
-from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.concat import concat
-from llemon.utils.logs import ASSISTANT, FILE, TOOL, USER
-from llemon.utils.trim import trim
+from llemon.objects.request import Request, Response
+from llemon.objects.tool import Call, Tool, resolve_tools
+from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument, Warning
+from llemon.utils import ASSISTANT, FILE, TOOL, USER, concat, trim
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +41,7 @@ class GenerateRequest(Request):
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -69,6 +68,7 @@ class GenerateRequest(Request):
         self.seed = seed
         self.frequency_penalty = frequency_penalty
         self.presence_penalty = presence_penalty
+        self.repetition_penalty = repetition_penalty
         self.top_p = top_p
         self.top_k = top_k
         self.stop = stop
@@ -106,15 +106,23 @@ class GenerateRequest(Request):
         return self._return_incomplete_message
 
     def check_supported(self) -> None:
-        if self.variants is not None and not self.model.config.supports_variants:
-            raise ConfigurationError(f"{self.model} doesn't support multiple responses")
+        for parameter in self.model.config.unsupported_parameters or []:
+            if getattr(self, parameter, None) is not None:
+                warnings.warn(f"{self.model} doesn't support {parameter}", Warning)
+                setattr(self, parameter, None)
         if self.tools and not self.model.config.supports_tools:
-            raise ConfigurationError(f"{self.model} doesn't support tools")
+            warnings.warn(f"{self.model} doesn't support tools", Warning)
+            self.tools = []
+        accepted_files = []
         for file in self.files:
             if not self.model.config.accepts_files:
-                raise ConfigurationError(f"{self.model} doesn't support files")
+                warnings.warn(f"{self.model} doesn't support files", Warning)
+                break
             if file.mimetype not in self.model.config.accepts_files:
-                raise ConfigurationError(f"{self.model} doesn't support {file.mimetype} files ({file})")
+                warnings.warn(f"{self.model} doesn't support {file.mimetype} files ({file})", Warning)
+            else:
+                accepted_files.append(file)
+        self.files = accepted_files
 
     def append_instruction(self, instruction: str) -> None:
         instruction = trim(instruction)
@@ -158,11 +166,6 @@ class GenerateRequest(Request):
             return json.dumps(prediction)
         except TypeError:
             return str(prediction)
-
-    def _copy(self) -> Self:
-        request = super()._copy()
-        request.files = [file._copy() for file in self.files]
-        return request
 
 
 class GenerateResponse(Response):

@@ -4,7 +4,7 @@ from typing import Any
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.schema import CreateTable
 
-from llemon.models.tool import Toolbox
+from llemon.objects.tool import Toolbox
 
 
 class Database(Toolbox):

@@ -75,7 +75,7 @@ def lint(paths: list[str]) -> None:
         targets.extend([ROOT / PACKAGE, ROOT / "tests"])
     for target in targets:
         _execute("black", f"--line-length={LINE_LENGTH}", target)
-        _execute("isort", "--profile=black", target)
+        _execute("isort", f"-w {LINE_LENGTH}", "--profile=black", target)
         _execute("flake8", f"--max-line-length={LINE_LENGTH}", "--extend-ignore=E203,E402", target)
 
 

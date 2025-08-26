@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-import copy
 import datetime as dt
 from functools import cached_property
-from typing import Self
 
-from llemon.errors import InProgressError
-from llemon.types import NS, History
-from llemon.utils.now import now
+from llemon.types import Error, History
+from llemon.utils import now
 
 
 class Request:
@@ -16,6 +13,7 @@ class Request:
         if history is None:
             history = []
         self.history = history
+        self.id: str | None = None
 
     def __str__(self) -> str:
         return "request"
@@ -28,9 +26,6 @@ class Request:
 
     def format(self, emoji: bool = True) -> str:
         raise NotImplementedError()
-
-    def _copy(self) -> Self:
-        return copy.copy(self)
 
 
 class Response:
@@ -58,8 +53,5 @@ class Response:
     def format(self, emoji: bool = True) -> str:
         raise NotImplementedError()
 
-    def _copy(self) -> Self:
-        return copy.copy(self)
-
-    def _incomplete_request(self) -> InProgressError:
-        return InProgressError(f"{self.request} hasn't completed yet")
+    def _incomplete_request(self) -> Error:
+        return Error(f"{self.request} hasn't completed yet")

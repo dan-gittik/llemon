@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import ClassVar, Iterator, Literal, NoReturn, cast
+from typing import Iterator, ClassVar, Literal, cast
 
 import anthropic
 from anthropic.types import (
@@ -24,18 +24,15 @@ from anthropic.types import (
 )
 from pydantic import BaseModel
 
-from llemon.core.llm.llm_model_property import LLMModelProperty
-from llemon.errors import ConfigurationError, Error
-from llemon.models.file import File
-from llemon.models.tool import Call, Tool
+from llemon.sync.llm import LLM
+from llemon.genai.llm_model_property import LLMModelProperty
+from llemon.objects.file import File
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.llm_tokenizer import LLMTokenizer
-from llemon.sync.types import NS, ToolCalls, ToolStream
-from llemon.utils.logs import ASSISTANT, SYSTEM, USER
+from llemon.objects.tool import Call, Tool
+from llemon.sync.types import NS, Error, ToolCalls, ToolStream
+from llemon.utils import ASSISTANT, SYSTEM, USER
 
 log = logging.getLogger(__name__)
 
@@ -55,8 +52,13 @@ class Anthropic(LLM):
     def __init__(self, api_key: str) -> None:
         self.client = anthropic.Anthropic(api_key=api_key)
 
-    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
-        return AnthropicTokenizer(self.client, model)
+    def count_tokens(self, request: GenerateRequest) -> int:
+        messages = self._messages(request)
+        response = self.client.messages.count_tokens(
+            model=request.model.name,
+            messages=messages,
+        )
+        return response.input_tokens
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         return self._generate(request, GenerateResponse(request))
@@ -190,6 +192,7 @@ class Anthropic(LLM):
             )
         except anthropic.APIError as error:
             raise Error(error)
+        request.id = anthropic_response.id
         self._check_stop_reason(anthropic_response.stop_reason, request.return_incomplete_message)
         texts: list[str] = []
         tools: ToolCalls = []
@@ -218,7 +221,7 @@ class Anthropic(LLM):
             messages = self._messages(request)
         try:
             instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
-            result = self.client.messages.stream(
+            anthropic_response = self.client.messages.stream(
                 model=request.model.name,
                 messages=messages,
                 max_tokens=request.max_tokens or request.model.config.max_output_tokens or self.default_max_tokens,
@@ -235,7 +238,8 @@ class Anthropic(LLM):
 
         def stream() -> Iterator[str]:
             tool_stream: ToolStream = {}
-            with result as events:
+            with anthropic_response as events:
+                request.id = events.request_id
                 for event in events:
                     if event.type == "message_delta":
                         self._check_stop_reason(event.delta.stop_reason, request.return_incomplete_message)
@@ -302,6 +306,7 @@ class Anthropic(LLM):
             )
         except anthropic.APIError as error:
             raise Error(error)
+        request.id = anthropic_response.id
         self._check_stop_reason(anthropic_response.stop_reason, return_incomplete_messages=False)
         object: NS = {}
         tools: ToolCalls = []
@@ -370,32 +375,6 @@ class Anthropic(LLM):
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))
         response.calls.extend(calls)
-
-
-class AnthropicTokenizer(LLMTokenizer):
-
-    def __init__(self, client: anthropic.Anthropic, model: LLMModel) -> None:
-        self.client = client
-        self.model = model
-
-    def count(self, text: str) -> int:
-        response = self.client.messages.count_tokens(
-            model=self.model.name,
-            messages=[MessageParam(role="user", content=text)],
-        )
-        return response.input_tokens
-
-    def parse(self, text: str) -> NoReturn:
-        raise self._unsupported()
-
-    def encode(self, *texts: str) -> NoReturn:
-        raise self._unsupported()
-
-    def decode(self, ids: list[int]) -> NoReturn:
-        raise self._unsupported()
-
-    def _unsupported(self) -> ConfigurationError:
-        raise ConfigurationError("Anthropic does not support explicit tokenization")
 
 
 def _optional[T](value: T | None) -> T | anthropic.NotGiven:

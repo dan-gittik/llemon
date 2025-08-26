@@ -154,6 +154,3 @@ class File:
         async with httpx.AsyncClient() as client:
             response = await client.get(self.url)
             self.data = response.content
-
-    def _copy(self) -> File:
-        return self.__class__(self.name, self.mimetype, self.data, self.url)

@@ -1,6 +1,6 @@
 import pathlib
 
-from llemon.models.tool import Toolbox
+from llemon.objects.tool import Toolbox
 
 
 class Directory(Toolbox):

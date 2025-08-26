@@ -2,10 +2,7 @@ from __future__ import annotations
 
 import openai
 
-from llemon.core.llm.llm_model import LLMModel
-from llemon.core.llm.llm_model_property import LLMModelProperty
-from llemon.core.llm.llm_tokenizer import LLMTokenizer
-from llemon.providers.huggingface import HuggingFaceTokenizer
+from llemon.genai.llm_model_property import LLMModelProperty
 from llemon.providers.openai import OpenAI
 
 
@@ -19,6 +16,3 @@ class DeepInfra(OpenAI):
             base_url="https://api.deepinfra.com/v1/openai",
             api_key=api_key,
         )
-
-    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
-        return HuggingFaceTokenizer(model)

@@ -2,11 +2,9 @@ from __future__ import annotations
 
 import json
 import logging
-from functools import cached_property
-from typing import Iterator, Literal, Sequence, cast
+from typing import Iterator, Literal, cast
 
 import openai
-import tiktoken
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
     ChatCompletionContentPartParam,
@@ -21,41 +19,30 @@ from openai.types.chat import (
 )
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_chunk import Choice as StreamChoice
-from openai.types.chat.chat_completion_content_part_image_param import (
-    ImageURL as ImageURLParam,
-)
+from openai.types.chat.chat_completion_content_part_image_param import ImageURL as ImageURLParam
 from openai.types.chat.chat_completion_content_part_param import (
     ChatCompletionContentPartImageParam,
     ChatCompletionContentPartTextParam,
 )
-from openai.types.chat.chat_completion_content_part_param import (
-    File as ChatcompletionContentPartFileParam,
-)
+from openai.types.chat.chat_completion_content_part_param import File as ChatcompletionContentPartFileParam
 from openai.types.chat.chat_completion_content_part_param import FileFile as FileParam
-from openai.types.chat.chat_completion_message_tool_call_param import (
-    Function as FunctionParam,
-)
+from openai.types.chat.chat_completion_message_tool_call_param import Function as FunctionParam
 from openai.types.shared_params import FunctionDefinition, ResponseFormatJSONObject
 from pydantic import BaseModel
 
-from llemon.core.llm.llm_model_property import LLMModelProperty
-from llemon.errors import Error
-from llemon.models.file import File
-from llemon.models.tool import Call
+from llemon.sync.llm import LLM
+from llemon.genai.llm_model_property import LLMModelProperty
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
+from llemon.objects.file import File
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.llm_tokenizer import LLMToken, LLMTokenizer
-from llemon.sync.types import NS, ToolCalls, ToolDeltas, ToolStream
-from llemon.utils.logs import ASSISTANT, SYSTEM, USER
-from llemon.utils.parallelize import parallelize
+from llemon.objects.tool import Call
+from llemon.sync.types import NS, Error, ToolCalls, ToolDeltas, ToolStream
+from llemon.utils import ASSISTANT, SYSTEM, USER, parallelize
 
 FILE_IDS = "openai.file_ids"
 FILE_HASHES = "openai.file_hashes"
-ENCODINGS: dict[str, tiktoken.Encoding] = {}
 
 log = logging.getLogger(__name__)
 
@@ -88,10 +75,9 @@ class OpenAI(LLM):
         state.pop(FILE_HASHES, None)
         super().cleanup(state)
 
-    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
-        if model.name not in ENCODINGS:
-            ENCODINGS[model.name] = tiktoken.encoding_for_model(model.name)
-        return OpenAITokenizer(ENCODINGS[model.name])
+    def count_tokens(self, request: GenerateRequest) -> int:
+        # messages = self._messages(request)
+        raise NotImplementedError()
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
         return self._generate(request, GenerateResponse(request))
@@ -254,6 +240,9 @@ class OpenAI(LLM):
         if messages is None:
             messages = self._messages(request)
         try:
+            extra_body: NS = {}
+            if request.repetition_penalty:
+                extra_body["repetition_penalty"] = request.repetition_penalty
             response_format = ResponseFormatJSONObject(type="json_object") if json else openai.NOT_GIVEN
             openai_response = self.client.chat.completions.create(
                 model=request.model.name,
@@ -268,11 +257,13 @@ class OpenAI(LLM):
                 presence_penalty=_optional(request.presence_penalty),
                 top_p=_optional(request.top_p),
                 stop=_optional(request.stop),
+                extra_body=extra_body,
                 response_format=response_format,
                 logit_bias=logit_bias,
             )
         except openai.APIError as error:
             raise Error(error)
+        request.id = openai_response.id
         result, is_tool = self._parse_choices(openai_response.choices, request.return_incomplete_message)
         if is_tool:
             self._run_tools(request, response, messages, cast(ToolCalls, result))
@@ -292,6 +283,9 @@ class OpenAI(LLM):
         if messages is None:
             messages = self._messages(request)
         try:
+            extra_body: NS = {}
+            if request.repetition_penalty:
+                extra_body["repetition_penalty"] = request.repetition_penalty
             openai_response = self.client.chat.completions.create(
                 model=request.model.name,
                 messages=messages,
@@ -304,6 +298,7 @@ class OpenAI(LLM):
                 presence_penalty=_optional(request.presence_penalty),
                 top_p=_optional(request.top_p),
                 stop=_optional(request.stop),
+                extra_body=extra_body,
                 stream=True,
             )
         except openai.APIError as error:
@@ -312,6 +307,8 @@ class OpenAI(LLM):
         def stream() -> Iterator[str]:
             tool_stream: ToolStream = {}
             for chunk in openai_response:
+                if request.id is None:
+                    request.id = chunk.id
                 result, is_tool = self._parse_stream_choices(chunk.choices, request.return_incomplete_message)
                 if is_tool:
                     for index, id, name, arguments in cast(ToolDeltas, result):
@@ -344,6 +341,9 @@ class OpenAI(LLM):
         if messages is None:
             messages = self._messages(request)
         try:
+            extra_body: NS = {}
+            if request.repetition_penalty:
+                extra_body["repetition_penalty"] = request.repetition_penalty
             openai_response = self.client.beta.chat.completions.parse(
                 model=request.model.name,
                 messages=messages,
@@ -357,10 +357,12 @@ class OpenAI(LLM):
                 presence_penalty=_optional(request.presence_penalty),
                 top_p=_optional(request.top_p),
                 stop=_optional(request.stop),
+                extra_body=extra_body,
                 response_format=request.schema,
             )
         except openai.APIError as error:
             raise Error(error)
+        request.id = openai_response.id
         result, is_tool = self._parse_data_choices(openai_response.choices, return_incomplete_message=False)
         if is_tool:
             self._run_tools(request, response, messages, cast(ToolCalls, result))
@@ -517,50 +519,6 @@ class OpenAI(LLM):
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))
         response.calls.extend(calls)
-
-
-class OpenAITokenizer(LLMTokenizer):
-
-    def __init__(self, encoding: tiktoken.Encoding) -> None:
-        self.encoding = encoding
-
-    def count(self, text: str) -> int:
-        return len(self.encoding.encode(text))
-
-    def parse(self, text: str) -> Sequence[OpenAIToken]:
-        tokens: list[OpenAIToken] = []
-        token: OpenAIToken | None = None
-        for token_id in self.encoding.encode(text):
-            token = OpenAIToken(token_id, self.encoding, token)
-            tokens.append(token)
-        return tokens
-
-    def encode(self, *texts: str) -> list[int]:
-        ids: list[int] = []
-        for text in texts:
-            ids.extend(self.encoding.encode(text))
-        return ids
-
-    def decode(self, ids: list[int]) -> str:
-        return self.encoding.decode(ids)
-
-
-class OpenAIToken(LLMToken):
-
-    def __init__(self, id: int, encoding: tiktoken.Encoding, prev: OpenAIToken | None) -> None:
-        super().__init__(id)
-        self._encoding = encoding
-        self._prev = prev
-
-    @cached_property
-    def text(self) -> str:
-        return self._encoding.decode([self.id])
-
-    @cached_property
-    def offset(self) -> int:
-        if self._prev is None:
-            return 0
-        return self._prev.offset + len(self._prev.text)
 
 
 def _optional[T](value: T | None) -> T | openai.NotGiven:

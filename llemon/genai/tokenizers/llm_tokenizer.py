@@ -4,10 +4,10 @@ from typing import ClassVar, Sequence
 
 from pydantic import BaseModel
 
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.generate import GenerateRequest
-from llemon.sync.generate_object import GenerateObjectRequest
-from llemon.sync.types import Error, NS, RenderArgument, FilesArgument, ToolsArgument
+from llemon.genai.llm_model import LLMModel
+from llemon.objects.generate import GenerateRequest
+from llemon.objects.generate_object import GenerateObjectRequest
+from llemon.types import Error, NS, RenderArgument, FilesArgument, ToolsArgument
 from llemon.utils import concat, schema_to_model
 
 
@@ -40,7 +40,7 @@ class LLMTokenizer:
             raise ValueError(f"no tokenizer {label!r} (available tokenizers are {concat(cls.classes)})")
         return cls.classes[label]
 
-    def count(
+    async def count(
         self,
         message1: str | None = None,
         message2: str | None = None,
@@ -66,21 +66,21 @@ class LLMTokenizer:
         if schema is not None:
             if isinstance(schema, dict):
                 schema = schema_to_model(schema)
-            return self._count(GenerateObjectRequest[BaseModel](schema=schema, **args))
+            return await self._count(GenerateObjectRequest[BaseModel](schema=schema, **args))
         else:
-            return self._count(GenerateRequest(**args))
+            return await self._count(GenerateRequest(**args))
 
-    def encode(self, *texts: str) -> list[int]:
+    async def encode(self, *texts: str) -> list[int]:
         raise self._unsupported()
 
-    def decode(self, *ids: int) -> str:
+    async def decode(self, *ids: int) -> str:
         raise self._unsupported()
 
-    def parse(self, text: str) -> Sequence[LLMToken]:
+    async def parse(self, text: str) -> Sequence[LLMToken]:
         raise self._unsupported()
     
-    def _count(self, request: GenerateRequest) -> int:
-        return self.model.llm.count_tokens(request)
+    async def _count(self, request: GenerateRequest) -> int:
+        return await self.model.llm.count_tokens(request)
 
     def _unsupported(self) -> Error:
         return Error(f"{self.model} tokenizer does not support this operation")

@@ -1,21 +1,19 @@
 from __future__ import annotations
 
+import copy
 import re
 import warnings
 from types import TracebackType
-from typing import TYPE_CHECKING, Iterator, cast
+from typing import Iterator, cast
 
 from pydantic import BaseModel
 
-from llemon.errors import FinishedError
-from llemon.models.tool import resolve_tools
-from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.parallelize import async_parallelize
-from llemon.utils.rendering import Rendering
-from llemon.utils.schema import schema_to_model
+from llemon.objects.file import File
+from llemon.objects.tool import resolve_tools
+from llemon.objects.rendering import Rendering
+from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.utils import async_parallelize, schema_to_model
 
-if TYPE_CHECKING:
-    from llemon.core.llm.llm import LLM
 
 SPACES = re.compile(r"\s+")
 
@@ -114,7 +112,7 @@ class Conversation:
 
     async def prepare(self) -> Conversation:
         self._assert_not_finished()
-        self.history = [(request._copy(), response._copy()) for request, response in self.history]
+        self.history = self._copy_history()
         await async_parallelize([(self.llm.prepare, (request, self._state), {}) for request, _ in self])
         return self
 
@@ -160,6 +158,7 @@ class Conversation:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -183,6 +182,7 @@ class Conversation:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -211,6 +211,7 @@ class Conversation:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -233,6 +234,7 @@ class Conversation:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -261,6 +263,7 @@ class Conversation:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         prediction: T | NS | None = None,
@@ -285,6 +288,7 @@ class Conversation:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             prediction=prediction,
@@ -332,13 +336,29 @@ class Conversation:
 
     def _assert_not_finished(self) -> None:
         if self.finished:
-            raise FinishedError(f"{self!r} has already finished")
+            raise Error(f"{self!r} has already finished")
+
+    def _copy_history(self) -> list[tuple[Request, Response]]:
+        history = []
+        for request, response in self.history:
+            if isinstance(request, GenerateRequest):
+                request = copy.copy(request)
+                request.id = None
+                files: list[File] = []
+                for file in request.files:
+                    file = copy.copy(file)
+                    file.id = None
+                    files.append(file)
+                request.files = files
+            history.append((request, response))
+        return history
 
 
-from llemon.core.llm.llm_model import LLMModel
-from llemon.models.classify import ClassifyRequest, ClassifyResponse
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.request import Request, Response
+from llemon.genai.llm import LLM
+from llemon.genai.llm_model import LLMModel
+from llemon.objects.classify import ClassifyRequest, ClassifyResponse
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.objects.request import Request, Response
 from llemon.serialization import dump, load

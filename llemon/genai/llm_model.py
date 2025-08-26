@@ -7,10 +7,8 @@ from typing import AsyncIterator, cast
 
 from pydantic import BaseModel
 
-from llemon.core.llm.llm_model_config import LLMModelConfig
-from llemon.core.llm.llm_tokenizer import LLMTokenizer
 from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils.schema import schema_to_model
+from llemon.utils import schema_to_model
 
 log = logging.getLogger(__name__)
 
@@ -30,7 +28,8 @@ class LLMModel:
 
     @cached_property
     def tokenizer(self) -> LLMTokenizer:
-        return self.llm.get_tokenizer(self)
+        tokenizer_class = LLMTokenizer.get(self.config.tokenizer)
+        return tokenizer_class(self)
 
     def conversation(
         self,
@@ -60,6 +59,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -83,6 +83,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -109,6 +110,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -131,6 +133,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -158,6 +161,7 @@ class LLMModel:
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         prediction: T | NS | None = None,
@@ -183,6 +187,7 @@ class LLMModel:
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             prediction=prediction,
@@ -238,8 +243,10 @@ class LLMModel:
 
 
 from llemon.conversation import Conversation
-from llemon.core.llm.llm import LLM
-from llemon.models.classify import ClassifyRequest, ClassifyResponse
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.genai.llm import LLM
+from llemon.genai.llm_model_config import LLMModelConfig
+from llemon.genai.tokenizers.llm_tokenizer import LLMTokenizer
+from llemon.objects.classify import ClassifyRequest, ClassifyResponse
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse

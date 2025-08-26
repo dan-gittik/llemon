@@ -5,10 +5,8 @@ from typing import ClassVar
 
 from pydantic import BaseModel
 
-from llemon.errors import ConfigurationError
 from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.sync.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 
 
 class GenerateObjectRequest[T: BaseModel](GenerateRequest):
@@ -34,6 +32,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
         seed: int | None = None,
         frequency_penalty: float | None = None,
         presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
@@ -56,6 +55,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
             seed=seed,
             frequency_penalty=frequency_penalty,
             presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
             top_p=top_p,
             top_k=top_k,
             stop=stop,
@@ -70,7 +70,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
     def check_supported(self) -> None:
         super().check_supported()
         if not self.model.config.supports_json:
-            raise ConfigurationError(f"{self.model} doesn't support structured output")
+            raise Error(f"{self.model} doesn't support structured output")
 
 
 class GenerateObjectResponse[T: BaseModel](GenerateResponse):
@@ -101,3 +101,6 @@ class GenerateObjectResponse[T: BaseModel](GenerateResponse):
     def complete_object(self, *objects: T) -> None:
         self._objects = list(objects)
         super().complete_text(*[object.model_dump_json() for object in objects])
+
+
+from llemon.sync.llm_model import LLMModel

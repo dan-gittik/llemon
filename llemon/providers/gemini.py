@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import AsyncIterator, Literal, NoReturn, cast
+from typing import AsyncIterator, Literal, cast
 
 from google import genai
 from google.genai.types import (
@@ -24,18 +24,15 @@ from google.genai.types import (
 )
 from pydantic import BaseModel
 
-from llemon.core.llm.llm import LLM
-from llemon.core.llm.llm_model import LLMModel
-from llemon.core.llm.llm_model_property import LLMModelProperty
-from llemon.core.llm.llm_tokenizer import LLMTokenizer
-from llemon.errors import ConfigurationError, Error
-from llemon.models.file import File
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.tool import Call
-from llemon.types import NS, ToolCalls
-from llemon.utils.logs import ASSISTANT, SYSTEM, USER
+from llemon.genai.llm import LLM
+from llemon.genai.llm_model_property import LLMModelProperty
+from llemon.objects.file import File
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.objects.tool import Call
+from llemon.types import NS, Error, ToolCalls
+from llemon.utils import ASSISTANT, SYSTEM, USER
 
 log = logging.getLogger(__name__)
 
@@ -56,7 +53,7 @@ class Gemini(LLM):
         version: str | None = None,
     ) -> None:
         if sum([bool(api_key), bool(project) or bool(location)]) != 1:
-            raise ConfigurationError("either API key or project and location must be provided")
+            raise Error("either API key or project and location must be provided")
         options: NS = {}
         if version:
             options["http_options"] = HttpOptions(api_version=version)
@@ -65,8 +62,13 @@ class Gemini(LLM):
         else:
             self.client = genai.Client(project=project, location=location, vertexai=True)
 
-    def get_tokenizer(self, model: LLMModel) -> LLMTokenizer:
-        return GeminiTokenizer(self.client, model)
+    async def count_tokens(self, request: GenerateRequest) -> int:
+        contents = await self._contents(request)
+        response = await self.client.aio.models.count_tokens(
+            model=request.model.name,
+            contents=contents,
+        )
+        return response.total_tokens or 0
 
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         return await self._generate(request, GenerateResponse(request))
@@ -211,6 +213,7 @@ class Gemini(LLM):
             )
         except Exception as error:
             raise Error(error)
+        request.id = gemini_response.response_id
         result, is_tool = self._parse_response(gemini_response, request.return_incomplete_message)
         if is_tool:
             await self._run_tools(request, response, contents, cast(ToolCalls, result))
@@ -233,7 +236,7 @@ class Gemini(LLM):
         if contents is None:
             contents = await self._contents(request)
         try:
-            anthropic_response = await self.client.aio.models.generate_content_stream(
+            gemini_response = await self.client.aio.models.generate_content_stream(
                 model=request.model.name,
                 contents=contents,
                 config=config,
@@ -243,7 +246,9 @@ class Gemini(LLM):
 
         async def stream() -> AsyncIterator[str]:
             tool_calls: ToolCalls = []
-            async for chunk in anthropic_response:
+            async for chunk in gemini_response:
+                if request.id is None:
+                    request.id = chunk.response_id
                 result, is_tool = self._parse_response(chunk, request.return_incomplete_message)
                 if is_tool:
                     tool_calls.extend(cast(ToolCalls, result))
@@ -281,6 +286,7 @@ class Gemini(LLM):
             )
         except Exception as error:
             raise Error(error)
+        request.id = gemini_response.response_id
         result, is_tool = self._parse_response(gemini_response, return_incomplete_message=False)
         if is_tool:
             await self._run_tools(request, response, contents, cast(ToolCalls, result))
@@ -338,29 +344,3 @@ class Gemini(LLM):
         contents.append(self._tool_call(calls))
         contents.append(self._tool_results(calls))
         response.calls.extend(calls)
-
-
-class GeminiTokenizer(LLMTokenizer):
-
-    def __init__(self, client: genai.Client, model: LLMModel) -> None:
-        self.client = client
-        self.model = model
-
-    async def count(self, text: str) -> int:
-        response = await self.client.aio.models.count_tokens(
-            model=self.model.name,
-            contents=text,
-        )
-        return response.total_tokens or 0
-
-    async def parse(self, text: str) -> NoReturn:
-        raise self._unsupported()
-
-    async def encode(self, *texts: str) -> NoReturn:
-        raise self._unsupported()
-
-    async def decode(self, ids: list[int]) -> NoReturn:
-        raise self._unsupported()
-
-    def _unsupported(self) -> ConfigurationError:
-        raise ConfigurationError("Gemini does not support explicit tokenization")

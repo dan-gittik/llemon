@@ -10,20 +10,19 @@ from srlz import Serialization, SimpleType
 import llemon.providers  # noqa: F401
 import llemon.tools  # noqa: F401
 from llemon.conversation import Conversation
-from llemon.core.llm.llm import LLM
-from llemon.core.llm.llm_model import LLMModel
-from llemon.core.llm.llm_model_config import LLM_MODEL_CONFIGS, LLMModelConfig
-from llemon.models.classify import ClassifyRequest, ClassifyResponse
-from llemon.models.file import File
-from llemon.models.generate import GenerateRequest, GenerateResponse
-from llemon.models.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.models.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.models.request import Request, Response
-from llemon.models.tool import Call, Tool, Toolbox, undefined
+from llemon.genai.llm import LLM
+from llemon.genai.llm_model import LLMModel
+from llemon.genai.llm_model_config import LLM_MODEL_CONFIGS, LLMModelConfig
+from llemon.objects.classify import ClassifyRequest, ClassifyResponse
+from llemon.objects.file import File
+from llemon.objects.generate import GenerateRequest, GenerateResponse
+from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
+from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+from llemon.objects.rendering import Rendering
+from llemon.objects.request import Request, Response
+from llemon.objects.tool import Call, Tool, Toolbox, undefined
 from llemon.types import NS, History
-from llemon.utils.concat import concat
-from llemon.utils.rendering import Rendering
-from llemon.utils.schema import schema_to_model
+from llemon.utils import concat, schema_to_model
 
 MODELS = "models"
 FILES = "files"
