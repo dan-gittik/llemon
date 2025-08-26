@@ -3,13 +3,14 @@
 A unified, ergnomoic interface for Generative AI in Python.
 
 - [Installation](#installation)
-- [Quickstart](#quickstart)
 - [Overview](#overview)
     - [Choosing a Provider](#choosing-a-provider)
     - [Choosing a Model](#choosing-a-model)
     - [Generation](#generation)
-    - [Streaming](#streaming)
+        - [Generation Parameters](#generation-parameters)
+        - [Streaming](#streaming)
     - [Structured Output](#structured-output)
+        - [Classification]
     - [Files](#files)
     - [Tools](#tools)
         - [Builtin Tools](#builtin-tools)
@@ -57,8 +58,6 @@ $ poetry install
 ...
 ```
 
-## Quickstart
-
 ## Overview
 
 Llemon provides identical synchronous and asynchronous APIs. It's async-first,
@@ -69,10 +68,12 @@ for the rest of the tutorial; to get equivalent synchronous code, swap it for
 ### Choosing a Provider
 
 The first thing we need to do is choose a provider: the same interface works for
-OpenAI, Anthropic, Gemini, and various open-source models like Llama, whether we
-run them locally (e.g. with Ollama) or not (e.g. via DeepInfra or TogetherAI).
-Naturally, the various models differ in their capabilities, styles and costs, so
-we get to choose which one to use. Standard models are available as properties:
+OpenAI, Anthropic, Gemini, and various open-source models like Llama or Qwen,
+whether we run them locally (e.g. with Ollama) or not (e.g. via DeepInfra or
+TogetherAI). Naturally, the various models differ in their capabilities and
+costs, so we have to choose which one to use.
+
+Standard models are available as properties:
 
 ```pycon
 >>> from llemon import OpenAI
@@ -96,8 +97,8 @@ we get to choose which one to use. Standard models are available as properties:
 ```
 
 The only catch is that to access external services, we need to set our API keys.
-We can do so by adding an `.env` file to our project and putting our API keys
-there, prefixed with their provider names:
+We can do so by adding them to an `.env` file at the root of our project, with
+each API key prefixed with its provider name:
 
 ```sh
 OPENAI_API_KEY=...
@@ -112,29 +113,29 @@ GEMINI_LOCATION=...
 DEEPINFRA_API_KEY=...
 ```
 
-Or, we can configure it programatically with `LLM.configure`:
+Or configure it programatically with `LLM.configure`:
 
 ```pycon
 >>> from llemon import LLM
 >>> LLM.configure(
-...     openai_api_key='...',
-...     anthropic_api_key='...',
-...     gemini_api_key='...',
-...     deepinfra_api_key='...',
+...     openai_api_key="...",
+...     anthropic_api_key="...",
+...     gemini_api_key="...",
+...     deepinfra_api_key="...",
 ... )
 ```
 
 ### Choosing a Model
 
-Like I said, most standard models are available as provider properties. If we
-need to use a non-standard model, or to choose one dynamically from a string, we
-can do it like so:
+Like I said, most standard models are available as provider properties. If the
+model we need is missing, or we want to choose it based on a dynamic string, we
+can do so like this:
 
 ```pycon
->>> o3 = OpenAI.model('o3')
+>>> o1 = OpenAI.model("o1")
 ```
 
-Now, standard models have a detailed configuration attached to them:
+Bear in mind, though, that each model has a configuration:
 
 ```pycon
 >>> OpenAI.gpt5.config
@@ -152,31 +153,36 @@ LLMModelConfig(
 )
 ```
 
-This determines how they work (or don't). For example, if structured output is
-supported, it can be used; if not, JSON is used instead; and if that's not
-supported either, the model will raise an error when structured generation is
-attempted, because there's no way to guarantee the output adheres to its schema.
-So when we access a *standard* model or create it from string, as in:
+Which determines how it work (or doesn't). For example, if structured output is
+supported, we can use the model to generate objects based on some schema; if
+it's not, we fall back to a JSON implementation; and if JSON is not supported
+either, generating an object will raise an error, since there's no way to
+guarantee it will adhere to the schema. For predefined models, these
+configurations are attached automatically, even if we use strings:
 
 ```pycon
 >>> gpt5 = OpenAI.model('gpt5')
+>>> gpt5.config.supports_structured_output
+True
 ```
 
-Its default configuration is attached automatically; when we create a
-non-standard one, however, we need to provide the configuration (or at least,
-those parts of it that matter for our usage) via keyword arguments:
+For the rest, however, this isn't the case:
 
 ```pycon
->>> o3 = OpenAI.model('o3'
-...     supports_structured_output=True,
-...     supports_tools=True,
-...     accepts_files=['image/jpeg', 'image/png'],
-... )
+>>> o3.config.supports_structured_output
+None
+```
+
+So some features will not work as expected, unless we provide the configuration
+(or at least, those parts of it that matter for our scenario) as well:
+
+```pycon
+>>> o1 = OpenAI.model("o1", supports_structured_output=True)
 ```
 
 ### Generation
 
-Now that we have a model, we can start generating content:
+Now that we have a model, let's generate something!
 
 ```pycon
 >>> response = await OpenAI.gpt5_nano.generate("When was Alan Turing born? Be concise.")
@@ -186,17 +192,17 @@ Now that we have a model, we can start generating content:
 '23 June 1912.'
 ```
 
-If we provide it with one string, it's treated as the **user input**; if we
-provide it with two, the first one is treated as **instructions** (also known as
-the **system prompt**):
+If we provide just one string, it's treated as the **user input**; if we provide
+two, the first one is treated as the **instructions** (also known as the
+**system prompt**):
 
 ```pycon
 >>> await OpenAI.gpt5_nano.generate("Be concise.", "When was Alan Turing born?")
 <OpenAI/gpt-5-nano: 23 June 1912.>
 ```
 
-Note that using a model directly doesn't retain history: if we were to ask
-"Where?", it'd be a new query, so the model wouldn't know what we're talking
+Note that using a model directly doesn't retain history: if we were to ask next
+"Where?", it'd be a new query, and the model wouldn't know what we're talking
 about. To keep the messages history running, we need a **conversation**, which
 we'll cover [later](#conversations) – but just to give you a taste:
 
@@ -208,8 +214,8 @@ we'll cover [later](#conversations) – but just to give you a taste:
 <OpenAI/gpt-5-nano: Maida Vale, London, England (born at 3 Warrington Crescent).>
 ```
 
-The conversation object keeps all the **interactions** – that is,
-request-response pairs – so its entire flow can be easily inspected:
+The conversation object keeps track of all the **interactions** – that is,
+request-response pairs – so the entire flow can be inspected:
 
 ```pycon
 >>> conv
@@ -221,15 +227,15 @@ request-response pairs – so its entire flow can be easily inspected:
 🤖 Maida Vale, London, England.
 ```
 
-As well as indexed or sliced:
+And even indexed or sliced:
 
 ```pycon
 >>> conv[0]
 <conversation with OpenAI/gpt-5-nano: 🧑 When was Alan Turing born? | 🤖 23 June 1912.>
 ```
 
-This way, we can "undo" (`conv[:x]`) or "forget" (`conv[x:]`) part of a
-conversation and play it differently ("time travel"):
+This way, we can "undo" (`conv[:x]`) or "forget" (`conv[x:]`) parts of a
+conversation and replay it differently ("time travel"):
 
 ```pycon
 >>> conv = conv[0]
@@ -242,9 +248,11 @@ conversation and play it differently ("time travel"):
 🤖 Julius Mathison Turing and Sara Turing.
 ```
 
-But like I said, more on this later; back to generation. In addition to
+#### Generation Parameters
+
+But like I said, more on this later; back to generation for now. In addition to
 [files](#files), [tools](#tools), and [prompt rendering](#prompt-rendering),
-which we'll address shortly, it accepts the standard LLM parameters:
+which we'll address shortly, it accepts all the standard LLM parameters:
 
 - `temperature` (`0-1` or `0-2`, depending on the model; default is usually
   `0.7`): The generation's "originality"; use lower values for more predictable
@@ -270,19 +278,19 @@ which we'll address shortly, it accepts the standard LLM parameters:
 - `prediction`: A projected response that speeds up generation; use when editing
   or rewriting content that is expected to stay largely the same.
 
-Another parameter is `variants=` (`n=` in OpenAI, `candidate_count=` in Gemini);
-this lets us produce multiple responses in one generation:
+It also accept `variants=` (`n=` in OpenAI, `candidate_count=` in Gemini), which
+lets us produce multiple responses at once:
 
 ```pycon
->>> response = await OpenAI.gpt5_nano.generate("Tell me trivia about Alan Turing in one short sentence", variants=3)
+>>> response = await OpenAI.gpt5_nano.generate("Tell me one sentence about Alan Turing.", variants=3)
 >>> response
 <OpenAI/gpt-5-nano: Alan Turing poineered computer science and helped crack the Enigma code during WWII.>
 ```
 
-At first sight, only one response was generated; but that's only because one
-variant can be *selected* (i.e. returned by `response.text`) at a given time,
-for purposes of keeping a conversation's history coherent. The other variants
-are available in `.texts`:
+At first sight, it seems like there's only one response; but that's only because
+one variant can be *selected* (i.e. returned by `response.text`) at a given
+time, for purposes of keeping a conversation's history coherent. The other
+variants are available via `.texts`:
 
 ```pycon
 >>> response.texts
@@ -293,7 +301,7 @@ are available in `.texts`:
 ]
 ```
 
-So if we prefer a different one, we can `select` it instead (in which case *it*
+And if we prefer a different one, we can `select` it instead (in which case *it*
 becomes part of the conversation history):
 
 ```pycon
@@ -303,8 +311,8 @@ becomes part of the conversation history):
 ```
 
 This is also a good opportunity to show what happens when some model doesn't
-support a feature, since Anthropic's Claude can't return multiple responses in
-one generation:
+support a feature, since Anthropic's Claude doesn't do multiple responses at
+once:
 
 ```pycon
 >>> from llemon import Anthropic
@@ -312,10 +320,10 @@ one generation:
 llemon.errors.ConfigurationError: Anthropic/claude-3-5-haiku-latest doesn't support multiple responses
 ```
 
-### Streaming
+#### Streaming
 
-Streaming is quite similar to generation, except the response can be iterated
-over to get the content deltas as they are generated in real-time:
+Streaming is quite similar to generation, except the response is iterated over
+to get the content deltas as they are generated, in real-time:
 
 ```pycon
 >>> response = await OpenAI.gpt5_nano.stream("When was Alan Turin born?"):
@@ -333,9 +341,9 @@ same as before:
 'June 23, 1912.'
 ```
 
-Note that in some models this is streamed by token, like in GPT5 Nano above,
-while in others (like Gemini Flash 2.5) the information is buffered, yielding
-parts of (or even entire) sentences at a time:
+Note that in some models the stream yields one token at a time, like in ChatGPT
+above, while in others (like Gemini Flash 2.5) the information is buffered,
+yielding parts of (or even entire) sentences at a time:
 
 ```pycon
 >>> response = Gemini.flash25.stream("When was Alan Turin born?"):
@@ -402,11 +410,15 @@ class dynamically:
 name='Bob' age=30 hobbies=['cooking']
 ```
 
-Note that most models are a bit limited in the schemas they accept (notably,
-dictionary fields are not supported); you can read more about it
-[here](https://platform.openai.com/docs/guides/structured-outputs#supported-schemas).
+Dictionary schemas are more cumbersome to define, and the resulting object types
+aren't visible to type checkers, but it can come in handy if we receive the
+schema from elsewhere (e.g. via a REST API), in which case converting it to
+Pydantic is a bit of a headache. Luckily, Llemon does it for us – and what's
+more, it makes sure the schemas adhere to the [subset of features](https://platform.openai.com/docs/guides/structured-outputs#supported-schemas)
+supported by LLMs (e.g. dictionary fields are not allowed), raising informative errors if
+something about the schema is wrong.
 
-For purposes of conversation history, generated objects are stored as
+In terms of conversation history, generated objects are stored as
 JSON-serialized text – you can see it in the `.text` attribute:
 
 ```pycon
@@ -415,7 +427,7 @@ JSON-serialized text – you can see it in the `.text` attribute:
 ```
 
 And just like before, multiple variants can be generated, accessed via
-`.objects` (or `.texts`) and then `select`ed:
+`.objects` (or `.texts`) and `select`ed:
 
 ```pycon
 >>> response = await OpenAI.gpt5_nano.generate_object(Person, "Generate a person.", variants=3)
@@ -432,19 +444,21 @@ And just like before, multiple variants can be generated, accessed via
 <OpenAI/gpt-5-nano: name='Maya Thompson' age=28 hobbies=['cycling', 'coding']>
 ```
 
+#### [WIP] Classification
+
 ### Files
 
 Adding files is as simple as passing them in (to any of the generations above)
 with the `files=` keyword; those can be string URLs or paths, path objects or
-pairs of a mimetype (or a name from which it can be inferred) and binary data:
+pairs of `(mimetype_or_name, binary_data)`:
 
 ```pycon
->>> await OpenAI.gpt5_nano.generate("What animal is in the picture?", files=["cat.jpg"])
+>>> await OpenAI.gpt5_nano.generate("What's the animal in the picture?", files=["cat.jpg"])
 <OpenAI/gpt-5-nano: A tabby cat.>
->>> await OpenAI.gpt5_nano.generate("What animal is in the picture?", files=["https://picsum.photos/id/237/200/300.jpg"])
+>>> await OpenAI.gpt5_nano.generate("What's the animal in the picture?", files=["https://picsum.photos/id/237/200/300.jpg"])
 <OpenAI/gpt-5-nano: A black dog.>
 >>> data = open("cat.jpg", "rb").read()
->>> await OpenAI.gpt5_nano.generate("What animal is in the picture?", files=[("image/jpeg", data)])
+>>> await OpenAI.gpt5_nano.generate("What's the animal in the picture?", files=[("image/jpeg", data)])
 <OpenAI/gpt-5-nano: A tabby cat.>
 ```
 
@@ -455,7 +469,7 @@ have to be uploaded and referenced by ID. All of this happens behind the scenes;
 when we use a model directly, the relevant files (e.g. PDFs in case of ChatGPT)
 are uploaded before the request and deleted after it. In conversations, where
 the model might choose to revisit the files at a later point, the cleanup is
-postponed for when `conv.finish()` is called; alternatively, we can use it as a
+postponed for when `conv.finish()` is called, so it's recommended to use it as a
 context manager:
 
 ```pycon
@@ -529,9 +543,9 @@ Then, we can prevent the model from using them on demand:
 OpenAI/gpt-5-nano: Berlin
 ```
 
-In this example, the model was able to infer the right answer despite us
-preventing it from invoking `get_weather`, because tool calls and results are
-also kept as part of the history. In fact, we can inspect them manually in a
+In this example, the model was able to infer the correct answer despite us
+preventing it from invoking `get_weather` again, because tool calls and results
+are kept as part of the history, too. In fact, we can inspect them manually in a
 given response's `.calls`:
 
 ```pycon
@@ -545,7 +559,7 @@ given response's `.calls`:
 
 As for the `use_tool=` parameter: if it's `None` (the default), the model can
 choose which tools to use at its discretion; if it's `False`, the model is
-prevented from using any; if it's `True`, the model is forced to use at least
+prohibited from using any; if it's `True`, the model is forced to use at least
 one; and if it's a string, the model is forced to use a tool with that
 particular name.
 
@@ -554,14 +568,14 @@ several invocations which are run concurrently: in the asynchronous case, each
 is deployed to a separate task, and in the synchronous case each is called from
 a separate thread.
 
-#### Builtin Tools
+#### [WIP] Builtin Tools
 
 ### Toolboxes
 
 Llemon comes equipped with several common tools to make life easier; and since
 these are customizeable, and thus somewhat more complex, it introduces the
 concept of a **toolbox** to define such dynamic collections. First, let's see a
-few of them in action, and then cover how to implement one ourselves.
+few examples in action, and then cover how to implement one ourselves.
 
 #### Directory Access
 
@@ -574,7 +588,7 @@ files/
     # … other files
 ```
 
-And we want it to access `secret.txt` and tell us its content. Well:
+And we want the model to access `secret.txt` and tell us its content. Well:
 
 ```pycon
 >>> from llemon import Directory
@@ -616,9 +630,8 @@ We get:
 [08/19/25 21:35:15] DEBUG    🤖 Secret keyword updated to banana.
 ```
 
-And the contents of `secret.txt` change to `banana`. And check it out – the
-model actually requested to read the file again after writing it, so as to
-double-check its contents.
+And check it out – the model actually requested to *read* the file after writing
+to it, so as to double-check its contents, which is kind of cute.
 
 #### Database Access
 
@@ -666,24 +679,26 @@ Look at it go, writing its own SQL queries to figure things out! And just like
 before, the access is read-only; passing `readonly=False` will allow the model
 to create, update and delete records as well.
 
-#### RAG
+As an aside, the database toolbox uses asynchronous database drivers, so we need
+`aiosqlite` installed for SQLite, `asyncpg` for PostgreSQL and `aiomysql` for
+MySQL. If we're using the synchronous version, that'd be the standard `sqlite`
+module, `psycopg2` and `pymysql` – but note that we don't have to specify any of
+this in the database URL (i.e. don't do `sqlite+aiosqlite://...`).
 
-# TODO
+#### [WIP] RAG
 
-#### Writing a Custom Toolbox
-
-# TODO
+#### [WIP] Writing a Custom Toolbox
 
 ### Prompt Rendering
 
 Sometimes, our instructions or messages need to be conditional: maybe they
-depend on some context variable, or they should include some bits and not others
-depending on our application's state.
+depend on some context variable, or maybe they should include some bits and not
+others depending on our application's state.
 
 Obviously, we can format them ourselves before passing them in – but Llemon
 actually comes equipped with template support, courtesy of [Jinja2](https://jinja.palletsprojects.com/en/stable/).
-For example, suppose we want to translate some English text into a target
-language that's part of a student's profile:
+For example, suppose we want to translate English text into some target language
+that's part of a student's profile:
 
 ```pycon
 >>> student.language = "Spanish"
@@ -695,9 +710,9 @@ language that's part of a student's profile:
 <OpenAI/gpt-5-nano: ¿Ser o no ser? Esa es la cuestión.>
 ```
 
-Suppose further that for beginners, we want to add a breakdown of this
-translation; and whether a student is a beginner or not is similarly part of
-their profile:
+Furthermore, suppose that for beginners, we want to add a breakdown of this
+translation, and that a student's profile indicates whether they're a beginner
+or not:
 
 ```pycon
 >>> student.is_beginner = True
@@ -732,9 +747,10 @@ Whole meaning:
 - The line presents a philosophical dilemma using parallel infinitives, and then states that this dilemma is the central issue. In Spanish, “cuestión” captures the idiomatic sense of “that is the question.” An alternative (less common) rendering for nuance is “¿Ser o no ser? Esa es la pregunta.”
 ```
 
-Note that prompt indentation is normalized: the first non-empty line's indent is
-removed from any line starting with (up to) that many spaces, so if we're using
-triple-quoted strings in our code, we don't have to do something ugly like:
+Also note that prompt indentation is normalized: the first non-empty line's
+indent is removed from any line starting with (up to) that many spaces, so if
+we're using triple-quoted strings in our code, we don't have to do something
+ugly like:
 
 ```python
 if condition:
@@ -749,19 +765,21 @@ But can match our code's indentation without compromising our prompt:
 
 ```python
 if condition:
-    response = OpenAI.gpt5_nano.generate("""
+    response = OpenAI.gpt5_nano.generate(
+        """
         Examples:
           - Example 1.
           - Example 2.
-    """)
+        """
+    )
 ```
 
 Normally, `{{ }}` is used for interpolating expressions, `{% %}` for executing
-statements, and `{# #}` for comments; if, however, curly braces have a special
-meaning in our prompts (for example, we include examples for generating
+statements, and `{# #}` for comments. However, if curly braces have a special
+meaning in our prompts (for example, we include examples with a lot of
 Javascript code), we can change this notation to `<< >>`, `<% %>` and `<# #>`,
 `[[ ]]`, `[% %]` and `[# #]` or `(( ))`, `(% %)` and `(# #)` by passing in the
-bracket type we want to use via the `render=` keyword:
+bracket type we want to use to the `render=` keyword:
 
 ```pycon
 >>> response = await OpenAI.gpt5_nano.generate(
@@ -773,8 +791,8 @@ bracket type we want to use via the `render=` keyword:
 #### Extending Rendering
 
 Jinja2 supports most Python operations, but sometimes we might need to extend
-it. For example, if we want to add something to our prompt if the user's address
-is in a certain country, the syntax would be:
+it. For example, suppose we want to add a segment to our prompt if a user's
+address is in a certain country – the syntax would be:
 
 ```
 {% if user.address is in_county("US") %}
@@ -782,19 +800,23 @@ Mention you're not liable so users don't sue us.
 {% endif %}
 ```
 
-And `in_county` would be our own custom function, added to the rendering
-vocabulary like so:
+Where `in_county` is own custom function, added to the rendering vocabulary like
+so:
 
 ```pycon
 >>> from llemon import Rendering
+
 ... @Rendering.predicate
 ... def in_country(context, address, country):
 ...     # check that address is in country…
 ...     # use the context dictionary to access other template variables if necessary.
 ```
 
-Similarly, we can define our some variables or functions to always be available,
-like if we inject recurring (or optionally parameterizable) prompt segments:
+More generally, for a clause like `{% if value is predicate(*args, **kwargs) %}`
+our function's signature should be `predicate(context, value, *args, **kwargs)`.
+
+Similarly, we can define some variables or functions to always be available,
+like when we need to inject recurring (and optionally parameterizable) segments:
 
 ```
 {{ safety_guidelines }}
@@ -802,11 +824,15 @@ like if we inject recurring (or optionally parameterizable) prompt segments:
 {{ safety_guidelines(user.age) }}
 ```
 
-This is simply a matter of updating `Rendering`'s builtin `context`:
+This is simply a matter of updating `Rendering`'s builtin `namespace`:
 
 ```pycon
 >>> Rendering.namespace["safety_guidelines"] = "Don't talk about sex, religion or politics."
->>> # or...
+```
+
+Or using the `function` decorator for functions:
+
+```pycon
 >>> @Rendering.function
 >>> def safety_guidelines(age):
 ...     if age < 13:
@@ -814,16 +840,56 @@ This is simply a matter of updating `Rendering`'s builtin `context`:
 ...     return ""
 ```
 
+#### Toolbox Rendering
+
+Except for custom predicates and namespace functions we define ourselves,
+toolboxes can extend formatting, too. `Directory`, for example, lets us inject
+its files' contents with:
+
+```pycon
+{{ file("path/to/file") }}
+```
+
+While `Database` lets us execute an SQL query and embed the resultset in the
+instructions – that is, ahead of time, so the model doesn't have to go fishing
+for them by itself:
+
+```
+{{ sql("SELECT * FROM table") }}
+```
+
+#### [WIP] RAG
+
+#### [WIP] Toolbox Rendering Implementation
+
 #### Builtin Rendering Context
 
-A special variable, avaiable during rendering by default, is the `request`
+A special variable, available during rendering by default, is the `request`
 object, representing the current generation request. This can be useful in all
 sorts of cases; for example, we can tell the model its knowledge cutoff and
 prompt it what to say if asked about events beyond this date:
 
 ```
 Your knowledge cutoff date is: {{ request.model.config.knowledge_cutoff }}
-If asked about event beyond this day, don't improvise; say you don't know.
+If asked about events beyond this date, don't improvise; say you don't know.
+```
+
+Or use the RAG to inject any context that might be relevant to what the user has
+just said:
+
+```
+{{ rag(request.user_input) }}
+```
+
+Or run some emotional anaysis and respond differently than we normally would
+have if the user is distressed:
+
+```
+{% if request.user_input is distressed() %}
+    # special isntructions
+{% else %}
+    # regular instructions
+{% endif %}
 ```
 
 #### Parallel Rendering
@@ -834,7 +900,7 @@ predicates (`{% if value is predicate() %}`) and in case of namespace functions
 two sleeps of 2 seconds each would take a total of 4 seconds to run:
 
 ```pycon
->>> import asyncio, time, timeit
+>>> import asyncio, time
 >>> from llemon import Rendering
 >>> rendering = Rendering("{")
 
@@ -868,39 +934,8 @@ And again, as you can see, this works for both synchronous functions (which are
 executed in a threadpool) and asynchronous ones (which are deployed as
 concurrent tasks).
 
-Note that this doesn't work for predicates, because here sequentially actually
-matters: if we have something like:
-
-```
-{% if value1 is predicate1() %}
-    {% if value2 is predicate2() %}
-    {% endif %}
-{% endif %}
-```
-
-We'd have to evaluate `predicate1` to know whether we even should (or can)
-evaluate `predicate2`; trying to parallelize such cases gets tricky.
-
-#### Toolbox Rendering
-
-This works particularly well with toolboxes, which can register rendering
-functions as well as tools. `Directory`, for example, lets us inject file
-contents from that directory with:
-
-```pycon
-{{ file("path/to/file") }}
-```
-
-While `Database` lets us execute an SQL query and embed the records in the
-instructions – that is, ahead of time, so the model doesn't have to go fishing
-for it:
-
-```
-{{ sql("SELECT * FROM table") }}
-```
-
-Parallel rendering comes in handy in this case, since if we want to embed the
-results of multiple queries, doing this:
+This comes in handy with toolbox rendering: if we want to embed the results of
+multiple queries, doing this:
 
 ```
 {{ !sql(query1) }}
@@ -910,9 +945,60 @@ results of multiple queries, doing this:
 
 Will take as long as the longest query, instead of their combined time.
 
-# TODO: RAG
+Note that this doesn't work for predicates, because here sequentially actually
+matters – if we have something like:
 
-# TODO: Toolbox rendering implementation.
+```
+{% if value1 is predicate1() %}
+    {% if value2 is predicate2() %}
+    {% endif %}
+{% endif %}
+```
+
+We'd have to evaluate `predicate1` to know whether we even should (or can)
+evaluate `predicate2`; how to parallelize such cases isn't obvious, so it isn't
+supported.
+
+So, an alternative pattern is recommended. Suppose we want to run a series of
+tests ont he user input (e.g. checking for emotional disress, hostility, or
+disengagement) and calibrate the prompt accordingly. These tests might use GenAI
+themselves (what's known as "LLM-as-a-judge"), in which case the generation time
+can grow significantly; so to parallelize, we can do:
+
+```
+{{ !is_distressed(request) }}
+{{ !is_hostile(request) }}
+{{ !is_disengaged(request) }}
+
+{% if user_is_distressed %}
+...
+{% elif user_is_hostile %}
+...
+{% elif user_is_disengaged %}
+...
+{% else %}
+...
+{% endif %}
+```
+
+Where each of the predicates returns an empty string (i.e. doesn't add a prompt
+segment itself), but also modifies the request's context, which is then
+available to the rest of the prompt when the parallel evaluation is done and the
+rest of is rendered. An implementation of such a function might look like:
+
+```pycon
+>>> Rendering.function
+... async def is_distressed(request):
+...     request.context["user_is_distressed"] = await request.model.classify(
+...         f"""
+...         Given the following conversation:
+...         {request.history[-3:].format(emoji=False)}
+...         Would you say the the user is distressed?
+...         """,
+...         answers=["yes", "no"],
+...     ) == "yes"
+...     return ""
+```
 
 ### Conversations
 
@@ -948,26 +1034,24 @@ into their original form like so:
 >>> conv = Conversation.load(data)
 ```
 
-Conversations are also a good place to store information that's shared many
-interactions: namely, the model's instructions (as well as its context and
-formatting, if it's a template) and tools that are always available. We can
-still provide overriding instructions to a particular generation with the
-`instructions=` keyword (as well as `context=`, which is merged with the broader
-context, and an overriding `formatting=`), as well as `tools=`, which is merged
-with the conversation's tools.
+Conversations are also a good place to store information that's shared between
+multiple interactions: namely, the model's instructions (as well as its context
+and rendering, if it's a template) and tools that are always available. Of
+course, We can still provide `instructions=`, `context=`, `render=` and
+`tools=` per generation, and those override the conversation's "defaults".
 
-If at any point we want to switch the conversation's model or any of the above,
-we can use the `replace` method to get a copy with the same information, except
-for whatever changes we specify:
+If at any point we want to change the conversation's model or any of the above,
+we can use the `replace` method to get a copy with the same setup except for
+whatever changes we specify:
 
 ```pycon
->>> conv2 = conv.replace(instructions=...) # everything else stays the same
+>>> conv2 = conv.replace(instructions="...") # everything else stays the same
 ```
 
 This is actually what happens when we index or slice the conversation:
 `conv[i:j]` is equivalent to `conv.replace(history=conv.history[i:j])`, where
 `history` is a list of request-response pairs. We can always see a breakdown of
-those if we format the conversation:
+these if we format the conversation:
 
 ```pycon
 >>> print(conv.format())
@@ -978,8 +1062,9 @@ those if we format the conversation:
 …
 ```
 
-As well as get it in one line with `conv.format(one_line=True)`, which is what a
-conversation's `repr` does. Essentially, a conversation is a wrapper around its
+As well as get it in one line with `one_line=True`, which is what a
+conversation's `repr` does, or replace the emojis for `User:`/`Assistant:` texts
+with `emoji=False`. Essentially, a conversation is a wrapper around its
 `.history` – it even behaves as such. Besides slicing and indexing, `len(conv)`
 returns the number of interactions, `for request, response in conv` lets us
 iterate over them, and `bool(conv)` tells us if there are any.
@@ -1010,7 +1095,7 @@ True
 llemon.errors.FinishedError: <conversation: ...> has already finished
 ```
 
-If we forget to cleanup a conversation, it will issue a warning when it gets
+If we forget to finish a conversation, it will issue a warning when it gets
 garbage-collected, pretty much like un-awaited coroutines do:
 
 ```pycon
@@ -1032,10 +1117,10 @@ But note that this isn't always what we want – for example, if we `dump()` the
 conversation and `load()` it later, we want to keep any external context (e.g.
 files stored at the provider) intact, until we finalize it explicitly. In these
 cases, we can suppress the warning with `conv.finish(cleanup=False)`; it's still
-encouraged to call to render the conversation object inactive, lest we
-accidentally keep using it after we're done. In fact, you might have noticed
-that it returns the conversation object itself – this is intended for method
-chaining, so we can collect it in one line:
+encouraged to call this to mark the conversation as over, lest we accidentally
+keep using it after we're done. In fact, you might have noticed that it returns
+the conversation object itself – this is intended for method chaining, so we can
+collect it in one line:
 
 ```pycon
 >>> data = conv.finish(cleanup=False).dump()
@@ -1043,9 +1128,9 @@ chaining, so we can collect it in one line:
 
 And if we ever do want to revive a finished conversation, `conv[:]` ought to do
 it. This also brings us to an interesting edge-case: if we replace the
-conversation model to a *different provider*, the fact that e.g. files were
+conversation model to a *different provider*, the fact that e.g. eiles were
 uploaded in one doesn't mean they will be available in the other – so we need to
-prepare it explicitly, going over (a fresh copy of) its history anew:
+(re-)prepare it explicitly, going over (a fresh copy of) its history anew:
 
 ```pycon
 >>> conv2 = conv.replace(model=Anthropic.haiku35)
@@ -1059,7 +1144,7 @@ And again, with method chaining:
 >>> conv2 = await conv.replace(model=Anthropic.haiku35).prepare()
 ```
 
-Or to revive a finished *and* cleaned up conversation:
+So, to revive a finished *and* cleaned up conversation:
 
 ```pycon
 >>> conv2 = await conv[:].prepare()
@@ -1067,15 +1152,14 @@ Or to revive a finished *and* cleaned up conversation:
 
 #### Multi-Bot Conversations
 
-This was pretty minute, so at this point it's worth pausing for a moment to
-reflect on what this conversation object is all about and whether it's even
-worth it. To illustrate, let's run a multi-bot conversation conversation as an
-example – something that'd normally be a bit tedious and confusing to implement.
+To illustrate how useful the conversation object can be, let's run a multi-bot
+conversation conversation – something that'd normally be pretty tedious and
+confusing to implement.
 
 Suppose we use one LLM to compose a limerick, and another one to criticize it
 and give it a grade (`A`, `B` or `C`). We want to iterate between the two until
-an `A` grade is reached (and cap it at, say, 10 iterations). Doing this manually
-can get pretty tedious; with conversations, all we have to do is:
+an `A` grade is reached (and cap it at, say, 10 iterations). Let's use Gemini
+and Anthropic, just to mix things up a bit; all the code we need is:
 
 ```pycon
 >>> class Review(BaseModel):
@@ -1085,13 +1169,13 @@ can get pretty tedious; with conversations, all we have to do is:
 >>> writer = Gemini.lite2("Answer in 5-line limericks, nothing else.")
 >>> critic = Anthropic.haiku35("Grade a limerick on its style and wit as A, B or C; if not A, explain what can be improved.")
 >>> async with writer, critic:
-...     limerick = writer.generate() # empty user input becomes "."
+...     limerick = writer.generate() # empty user input sends "." by default
 ...     for _ in range(10):
 ...         review = await critic.generate_object(Review, limerick.text)
 ...         if review.object.grade == "A":
 ...             break
 ...         limerick = await writer.generate(
-...             """
+...             f"""
 ...             Rewrite your limerick given the following review:
 ...             {review.object.explanation}
 ...             """

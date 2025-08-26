@@ -367,7 +367,7 @@ class OpenAI(LLM):
             return "required"
         return ChatCompletionNamedToolChoiceParam(
             type="function",
-            function={"name": request.use_tool},
+            function={"name": request.get_tool_name(request.use_tool)},
         )
 
     def _parse_choices(

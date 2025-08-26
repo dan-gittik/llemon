@@ -51,7 +51,7 @@ def test(tests: list[str]) -> None:
     options: list[str] = []
     for test in tests:
         options.extend(["-k", test])
-    _execute("pytest", "tests", "-x", "-vv", "--ff", *options)
+    _execute("pytest", "tests", "-x", "-vv", "--ff", '-n', 'auto', *options)
 
 
 @main.command()

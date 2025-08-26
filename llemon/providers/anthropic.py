@@ -340,7 +340,7 @@ class Anthropic(LLM):
             return ToolChoiceNoneParam(type="none")
         if request.use_tool is True:
             return ToolChoiceAnyParam(type="any")
-        return ToolChoiceToolParam(type="tool", name=request.use_tool)
+        return ToolChoiceToolParam(type="tool", name=request.get_tool_name(request.use_tool))
 
     def _check_stop_reason(
         self,

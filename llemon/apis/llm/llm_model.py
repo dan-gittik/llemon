@@ -29,7 +29,7 @@ class LLMModel:
     @classmethod
     def load(cls, data: NS) -> LLMModel:
         llm_class = LLM.classes[data["provider"]]
-        return llm_class.get(data["name"], **(data.get("config") or {}))
+        return llm_class.model(data["name"], **(data.get("config") or {}))
 
     def conversation(
         self,

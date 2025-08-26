@@ -75,7 +75,7 @@ class LLM:
         return cls(**kwargs)
 
     @classmethod
-    def get(
+    def model(
         cls,
         name: str,
         *,

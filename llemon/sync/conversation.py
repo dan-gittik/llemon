@@ -96,6 +96,7 @@ class Conversation:
         for tool in data.get("tools", []):
             loaded = load_tool(tool)
             if isinstance(loaded, Toolbox):
+                tools[loaded.name] = loaded
                 for tool in loaded.tools:
                     tools[tool.name] = tool
             else:

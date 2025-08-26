@@ -75,6 +75,7 @@ class GenerateRequest(Request):
         self._user_input = user_input
         self._instructions: str | None = None
         self._return_incomplete_message = return_incomplete_message
+        self.context.update(request=self)
 
     def __str__(self) -> str:
         return f"{self.model}({self.user_input!r})"
