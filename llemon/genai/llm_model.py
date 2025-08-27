@@ -145,7 +145,7 @@ class LLMModel:
 
     async def generate_object[T: BaseModel](
         self,
-        schema: type[T] | NS,
+        schema: NS | type[T],
         message1: str | None = None,
         message2: str | None = None,
         /,
@@ -164,7 +164,7 @@ class LLMModel:
         repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
-        prediction: T | NS | None = None,
+        prediction: str | NS | T | None = None,
     ) -> GenerateObjectResponse[T]:
         if isinstance(schema, dict):
             model_class = cast(type[T], schema_to_model(schema))

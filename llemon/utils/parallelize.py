@@ -1,48 +1,50 @@
 import asyncio
 import inspect
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from llemon.utils.concat import concat
+
+type Invocations = Iterable[Callable[..., Any] | tuple[Callable[..., Any], *tuple[Any, ...]]]
 
 executor: ThreadPoolExecutor | None = None
 
 
-def parallelize(calls: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]]) -> list[Any]:
+def parallelize(calls: Invocations) -> list[Any]:
+    calls_ = [(call[0], call[1:]) if isinstance(call, tuple) else (call, ()) for call in calls]
     global executor
     if executor is None:
         executor = ThreadPoolExecutor()
     futures: list[Future[Any]] = []
-    for call, args, kwargs in calls:
-        future = executor.submit(call, *args, **kwargs)
+    for call, args in calls_:
+        future = executor.submit(to_sync(call), *args)
         futures.append(future)
     wait(futures)
     results: list[Any] = []
     errors: list[Exception] = []
     failed: list[str] = []
-    for future, (call, args, kwargs) in zip(futures, calls):
+    for future, (call, args) in zip(futures, calls_):
         try:
             result = future.result()
             results.append(result)
         except Exception as error:
             errors.append(error)
-            params = ", ".join([str(arg) for arg in args] + [f"{key}={value!r}" for key, value in kwargs.items()])
-            failed.append(f"{call.__name__}({params})")
+            failed.append(f"{call.__name__}({', '.join(str(arg) for arg in args)})")
     if errors:
         raise ExceptionGroup(f"failed to run {concat(failed, 'and')}", errors)
     return results
 
 
-async def async_parallelize(calls: list[tuple[Callable[..., Any], tuple[Any, ...], dict[str, Any]]]) -> list[Any]:
-    tasks = [asyncio.create_task(call(*args, **kwargs)) for call, args, kwargs in calls]
+async def async_parallelize(calls: Invocations) -> list[Any]:
+    calls_ = [(call[0], call[1:]) if isinstance(call, tuple) else (call, ()) for call in calls]
+    tasks = [asyncio.create_task(to_async(call)(*args)) for call, args in calls_]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     errors: list[Exception] = []
     failed: list[str] = []
-    for result, (call, args, kwargs) in zip(results, calls):
+    for result, (call, *args) in zip(results, calls_):
         if isinstance(result, Exception):
             errors.append(result)
-            params = ", ".join([str(arg) for arg in args] + [f"{key}={value!r}" for key, value in kwargs.items()])
-            failed.append(f"{call.__name__}({params})")
+            failed.append(f"{call.__name__}({', '.join(str(arg) for arg in args)})")
     if errors:
         raise ExceptionGroup(f"failed to run {concat(failed, 'and')}", errors)
     return results

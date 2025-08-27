@@ -1,5 +1,7 @@
 import functools
 import http.server
+import inspect
+import importlib
 import pathlib
 import re
 import shutil
@@ -8,6 +10,10 @@ import tomllib
 from typing import Any
 
 import click
+from pydantic import BaseModel
+from pydantic_core import PydanticUndefined
+from rich.console import Console
+from rich.table import Table
 import uvicorn
 
 ROOT = pathlib.Path(__file__).parent
@@ -21,6 +27,8 @@ ARTEFACTS = [
     "htmlcov",
     ".mypy_cache",
 ]
+console = Console()
+undefined = object()
 
 
 @click.group()
@@ -86,45 +94,118 @@ def type(packages: list[str]) -> None:
     for package in packages:
         targets.extend(["-p", f"{PACKAGE}.{package}"])
     if not packages:
-        targets.extend(["-p", PACKAGE])
+        targets.extend(["-p", PACKAGE, "-p", "tests"])
     _execute("mypy", *targets)
 
 
 @main.command()
 def sync() -> None:
-    filenames = [
-        "types.py",
-        "llm.py",
-        "llm_model.py",
-        "llm_tokenizer.py",
-        "generate.py",
-        "generate_stream.py",
-        "generate_object.py",
-        "classify.py",
-        "conversation.py",
-        "openai.py",
-        "anthropic.py",
-        "gemini.py",
-        "deepinfra.py",
-        "huggingface.py",
-        "rendering.py",
-        "serialization.py",
-    ]
     async_paths: list[pathlib.Path] = []
     for path in (ROOT / PACKAGE).rglob("*.py"):
-        if path.name in filenames and path.parent.name != "sync":
-            async_paths.append(path)
+        if path.name == "__init__.py" or path.parent.name in ["sync", "utils"]:
+            continue
+        async_paths.append(path)
     for async_path in async_paths:
         async_code = async_path.read_text()
         sync_code = _async_to_sync(async_code, async_paths)
         sync_path = ROOT / PACKAGE / "sync" / async_path.name
         sync_path.write_text(sync_code)
+    async_init = ROOT / PACKAGE / "__init__.py"
+    sync_init = ROOT / PACKAGE / "sync" / "__init__.py"
+    init = async_init.read_text()
+    init = re.sub(r"from \.(.+?)\.([^.]+?) ", r"from .\2 ", init)
+    init = init.replace("from .utils", "from ..utils")
+    sync_init.write_text(init)
     async_tests_directory = ROOT / "tests" / "async"
     sync_tests_directory = ROOT / "tests" / "sync"
     for async_path in async_tests_directory.rglob("*.py"):
         sync_path = sync_tests_directory / async_path.relative_to(async_tests_directory)
         sync_path.parent.mkdir(parents=True, exist_ok=True)
         sync_path.write_text(_async_to_sync(async_path.read_text(), async_paths))
+
+
+@main.command()
+def check_signatures() -> None:
+    model_diff = {
+        "missing": {"user_input", "instructions", "model"},
+        "extra": {"message1", "message2"},
+    }
+    conv_diff = {
+        "missing": {"user_input", "history", "model"},
+        "extra": {"save", "message"},
+    }
+    _check_signatures("GenerateRequest.__init__", "LLMModel.generate", **model_diff)
+    _check_signatures("GenerateRequest.__init__", "Conversation.generate", **conv_diff)
+    _check_signatures("GenerateStreamRequest.__init__", "LLMModel.generate_stream", **model_diff)
+    _check_signatures("GenerateStreamRequest.__init__", "Conversation.generate_stream", **conv_diff)
+    _check_signatures("GenerateObjectRequest.__init__", "LLMModel.generate_object", **model_diff)
+    _check_signatures("GenerateObjectRequest.__init__", "Conversation.generate_object", **conv_diff)
+    _check_signatures("ClassifyRequest.__init__", "LLMModel.classify", **model_diff)
+    _check_signatures("ClassifyRequest.__init__", "Conversation.classify", **conv_diff)
+    _check_signatures("LLMModelConfig.__init__", "LLM.model")
+
+
+def _check_signatures(source: str, target: str, **diff: dict[str, set[str]]) -> None:
+    missing = diff.get("missing", set())
+    extra = diff.get("extra", set())
+    source_location, source_parameters = _parse_function(source)
+    target_location, target_parameters = _parse_function(target)
+    rows: list[tuple[str, str]] = []
+    for name, (source_annotation, source_default) in source_parameters.items():
+        if name not in target_parameters:
+            if name not in missing:
+                rows.append((_param(name, source_annotation, source_default), "missing"))
+            continue
+        target_annotation, target_default = target_parameters[name]
+        if target_annotation != source_annotation or target_default != source_default:
+            rows.append((
+                _param(name, source_annotation, source_default),
+                _param(name, target_annotation, target_default),
+            ))
+    for name, (target_annotation, target_default) in target_parameters.items():
+        if name in source_parameters or name in extra:
+            continue
+        rows.append(("missing", _param(target_annotation, target_default)))
+    if not rows:
+        console.print(f":white_check_mark: {source} matches {target}")
+        return
+    table = Table(expand=True, show_lines=True)
+    table.add_column(f"{source} at {source_location}", style="green", ratio=1)
+    table.add_column(f"{target} at {target_location}", style="red", ratio=1)
+    for row in rows:
+        table.add_row(*row)
+    console.print(table)
+
+
+def _parse_function(path: str) -> tuple[str, dict[str, tuple[Any, Any]]]:
+    import llemon
+    class_name, function_name = path.split(".")
+    cls = getattr(llemon, class_name)
+    function = getattr(cls, function_name)
+    parameters: dict[str, tuple[Any, Any]] = {}
+    if function == BaseModel.__init__:
+        assert issubclass(cls, BaseModel)
+        path = pathlib.Path(importlib.import_module(cls.__module__).__file__).relative_to(ROOT)
+        line = inspect.findsource(cls)[1] + 1
+        for name, field in cls.model_fields.items():
+            default = undefined if field.default is PydanticUndefined else field.default
+            annotation = field.annotation.__name__ if inspect.isclass(field.annotation) else str(field.annotation)
+            annotation = annotation.replace("datetime.", "dt.")
+            parameters[name] = annotation, default
+    else:
+        path = pathlib.Path(function.__code__.co_filename).relative_to(ROOT)
+        line = function.__code__.co_firstlineno
+        for name, parameter in inspect.signature(function).parameters.items():
+            default = undefined if parameter.default is parameter.empty else parameter.default
+            parameters[name] = parameter.annotation, default
+    return f"{path}:{line}", parameters
+
+
+def _param(name: str, annotation: Any, default: Any) -> str:
+    output = f"{name}: {annotation}"
+    if default is not undefined:
+        output += f" = {default}"
+    return output
 
 
 def _execute(*args: Any) -> str:
@@ -155,7 +236,7 @@ def _async_to_sync(text: str, async_paths: list[pathlib.Path]) -> str:
         text = text.replace("import pytest_asyncio\n", "")
     text = text.replace("pytest_asyncio", "pytest")
     # Remove pytest_asyncio mark.
-    text = re.sub("\n*pytestmark = pytest.mark.asyncio", "", text)
+    text = re.sub(r"\s*pytestmark = pytest.mark.asyncio", "", text)
     # Remove import pytest if it's left unused.
     if "import pytest" in text and text.count("pytest") == 1:
         text = text.replace("import pytest\n", "")
@@ -174,8 +255,7 @@ def _async_to_sync(text: str, async_paths: list[pathlib.Path]) -> str:
     # AsyncIterator -> Iterator
     # AsyncOpenAI -> OpenAI
     # AsyncAnthropic -> Anthropic
-    # Tool.async_fetch -> Tool.fetch
-    # Call.async_run_all -> Call.run_all
+    # async_fetch -> fetch
     # async_parallelize -> parallelize
     text = re.sub(r"([aA]sync_?|await) *", "", text)
     return text

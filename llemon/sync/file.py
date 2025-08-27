@@ -8,8 +8,8 @@ import pathlib
 import re
 from functools import cached_property
 
-from llemon.types import FilesArgument
-from llemon.utils import async_fetch
+from llemon.sync.types import FilesArgument
+from llemon.utils import fetch
 
 DATA_URL_PATTERN = re.compile(r"^data:([^;]+);base64,(.*)$")
 
@@ -139,8 +139,8 @@ class File:
     def is_video(self) -> bool:
         return self.mimetype.startswith("video/")
 
-    async def fetch(self) -> None:
+    def fetch(self) -> None:
         if self.data:
             return
         log.debug("fetching %s data from %s", self, self.url)
-        self.data = await async_fetch(self.url)
+        self.data = fetch(self.url)

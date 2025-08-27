@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 from pydantic import BaseModel, Field
 
-from llemon import LLMModel
+from llemon import GenerateObjectResponse, LLMModel
 
 pytestmark = pytest.mark.asyncio
 
@@ -66,7 +66,7 @@ async def test_generate_object(model: LLMModel):
 
 @requires_structured_output
 async def test_generate_dict(model: LLMModel):
-    response = await model.generate_object(
+    response: GenerateObjectResponse[Person] = await model.generate_object(
         PERSON_SCHEMA,
         "Extract information about the person.",
         "Hello, my name is Alice and I like reading and hiking.",

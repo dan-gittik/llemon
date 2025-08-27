@@ -145,7 +145,7 @@ class LLMModel:
 
     def generate_object[T: BaseModel](
         self,
-        schema: type[T] | NS,
+        schema: NS | type[T],
         message1: str | None = None,
         message2: str | None = None,
         /,
@@ -164,7 +164,7 @@ class LLMModel:
         repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
-        prediction: T | NS | None = None,
+        prediction: str | NS | T | None = None,
     ) -> GenerateObjectResponse[T]:
         if isinstance(schema, dict):
             model_class = cast(type[T], schema_to_model(schema))
@@ -244,7 +244,7 @@ class LLMModel:
 
 from llemon.sync.conversation import Conversation
 from llemon.sync.llm import LLM
-from llemon.genai.llm_model_config import LLMModelConfig
+from llemon.sync.llm_model_config import LLMModelConfig
 from llemon.sync.llm_tokenizer import LLMTokenizer
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse

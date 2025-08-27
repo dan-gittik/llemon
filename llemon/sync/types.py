@@ -5,10 +5,10 @@ import pathlib
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
-    from llemon.objects.file import File
-    from llemon.objects.request import Request, Response
-    from llemon.objects.tool import Call, Tool, Toolbox
+    from llemon.sync.file import File
     from llemon.sync.rendering import Rendering
+    from llemon.sync.request import Request, Response
+    from llemon.sync.tool import Call, Tool, Toolbox
 
 type NS = dict[str, Any]
 type FilesArgument = Sequence[str | pathlib.Path | tuple[str, bytes] | File] | None

@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 from pydantic import BaseModel, Field
 
-from llemon.sync import LLMModel
+from llemon.sync import GenerateObjectResponse, LLMModel
 
 
 class Person(BaseModel):
@@ -64,7 +64,7 @@ def test_generate_object(model: LLMModel):
 
 @requires_structured_output
 def test_generate_dict(model: LLMModel):
-    response = model.generate_object(
+    response: GenerateObjectResponse[Person] = model.generate_object(
         PERSON_SCHEMA,
         "Extract information about the person.",
         "Hello, my name is Alice and I like reading and hiking.",

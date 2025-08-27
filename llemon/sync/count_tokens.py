@@ -1,14 +1,14 @@
 import json
 from typing import Callable
 
-from llemon.objects.generate import GenerateRequest, GenerateResponse
-from llemon.objects.generate_object import GenerateObjectRequest
+from llemon.sync.generate import GenerateRequest, GenerateResponse
+from llemon.sync.generate_object import GenerateObjectRequest
 
 
-async def count_tokens(request: GenerateRequest, count: Callable[[str], int]) -> int:
+def count_tokens(request: GenerateRequest, count: Callable[[str], int]) -> int:
     total = 0
     if request.instructions:
-        total += count(await request.render_instructions()) + 3
+        total += count(request.render_instructions()) + 3
     for request_, response_ in request.history:
         if isinstance(request_, GenerateRequest):
             total += count(request_.user_input) + 3

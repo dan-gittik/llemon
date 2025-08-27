@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 import logging
 import warnings
+from decimal import Decimal
 from functools import cached_property
 from typing import ClassVar
-
-from pydantic import BaseModel
 
 from llemon.objects.file import File
 from llemon.objects.rendering import Rendering
@@ -31,9 +29,9 @@ class GenerateRequest(Request):
         instructions: str | None = None,
         user_input: str | None = None,
         context: NS | None = None,
-        render: RenderArgument | None = None,
+        render: RenderArgument = None,
         files: FilesArgument = None,
-        tools: ToolsArgument | None = None,
+        tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         variants: int | None = None,
         temperature: float | None = None,
@@ -45,7 +43,7 @@ class GenerateRequest(Request):
         top_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
-        prediction: str | NS | BaseModel | None = None,
+        prediction: str | None = None,
         return_incomplete_message: bool | None = None,
     ) -> None:
         super().__init__(history=history)
@@ -72,7 +70,7 @@ class GenerateRequest(Request):
         self.top_p = top_p
         self.top_k = top_k
         self.stop = stop
-        self.prediction = self._resolve_prediction(prediction)
+        self.prediction = prediction
         self._user_input = user_input
         self._instructions: str | None = None
         self._return_incomplete_message = return_incomplete_message
@@ -157,16 +155,6 @@ class GenerateRequest(Request):
             output.append(f"{file_}{file.name}")
         return "\n".join(output)
 
-    def _resolve_prediction(self, prediction: str | NS | BaseModel | None) -> str | None:
-        if prediction is None:
-            return None
-        if isinstance(prediction, BaseModel):
-            return prediction.model_dump_json()
-        try:
-            return json.dumps(prediction)
-        except TypeError:
-            return str(prediction)
-
 
 class GenerateResponse(Response):
 
@@ -175,6 +163,10 @@ class GenerateResponse(Response):
     def __init__(self, request: GenerateRequest) -> None:
         super().__init__(request)
         self.calls: list[Call] = []
+        self.input_tokens = 0
+        self.cache_tokens = 0
+        self.output_tokens = 0
+        self.reasoning_tokens = 0
         self._texts: list[str] = []
         self._selected = 0
 
@@ -190,6 +182,19 @@ class GenerateResponse(Response):
     @cached_property
     def text(self) -> str:
         return self._texts[self._selected]
+
+    @cached_property
+    def cost(self) -> Decimal:
+        return (
+            Decimal(self.input_tokens) * Decimal(self.request.model.config.cost_per_1m_input_tokens or 0)
+            + Decimal(self.cache_tokens) * Decimal(self.request.model.config.cost_per_1m_cache_tokens or 0)
+            + Decimal(self.output_tokens) * Decimal(self.request.model.config.cost_per_1m_output_tokens or 0)
+            + Decimal(self.reasoning_tokens) * Decimal(self.request.model.config.cost_per_1m_output_tokens or 0)
+        ) / 1_000_000
+
+    @cached_property
+    def tps(self) -> float:
+        return (self.reasoning_tokens + self.output_tokens) / self.duration
 
     def complete_text(self, *texts: str) -> None:
         self._texts = [text.strip() for text in texts]

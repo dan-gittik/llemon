@@ -1,5 +1,5 @@
-from .llm_tokenizer import LLMTokenizer, LLMToken
 from .hftokenizer import HFTokenizer
+from .llm_tokenizer import LLMToken, LLMTokenizer
 from .tiktokenizer import TikTokenizer
 
 __all__ = [

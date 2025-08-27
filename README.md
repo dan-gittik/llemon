@@ -36,6 +36,8 @@ A unified, ergnomoic interface for Generative AI in Python.
         - [Caching](#caching)
         - [Metrics](#metrics)
 - [Local Development](#local-development)
+    - [Running Models Locally](#running-models-locally)
+        - [Ollama](#ollama)
 - [License](#license)
 
 ![Llemon Logo](llemon.png)
@@ -77,23 +79,20 @@ Standard models are available as properties:
 
 ```pycon
 >>> from llemon import OpenAI
->>> OpenAI.gpt5(...)
->>> OpenAI.gpt5_nano(...)
+>>> OpenAI.gpt5_nano
+<OpenAI:gpt-5-nano>
 
 >>> from llemon import Anthropic
->>> Anthropic.opus4(...)
 >>> Anthropic.haiku35(...)
+<Anthropic:claude-3-5-haiku-latest>
 
 >>> from llemon import Gemini
->>> Gemini.pro25(...)
->>> Gemini.lite2(...)
+>>> Gemini.lite2
+<Gemini:gemini-2.0-flash-lite>
 
 >>> from llemon import DeepInfra
->>> DeepInfra.llama31_70b(...)
 >>> DeepInfra.llama31_8b(...)
-
->>> from llemon import Ollama
->>> Ollama.mistral_7b(...)
+<DeepInfra:meta-llama/Meta-Llama-3.1-8B-Instruct>
 ```
 
 The only catch is that to access external services, we need to set our API keys.
@@ -132,24 +131,30 @@ model we need is missing, or we want to choose it based on a dynamic string, we
 can do so like this:
 
 ```pycon
->>> o1 = OpenAI.model("o1")
+>>> from llemon import Ollama
+>>> mistral = Ollama.model("mistral")
+>>> mistral
+<Ollama/mistral>
 ```
 
 Bear in mind, though, that each model has a configuration:
 
 ```pycon
->>> OpenAI.gpt5.config
+>>> OpenAI.gpt5_nano.config
 LLMModelConfig(
-    knowledge_cutoff=datetime.date(2024, 10, 1),
+    name='gpt-5-nano',
+    tokenizer=None,
+    knowledge_cutoff=datetime.date(2024, 5, 31),
     context_window=400000,
     max_output_tokens=128000,
+    unsupported_parameters=['temperature', 'frequency_penalty', 'presence_penalty', 'repetition_penalty', 'top_k'],
     supports_streaming=True,
     supports_structured_output=True,
     supports_json=True,
     supports_tools=True,
     accepts_files=['image/jpeg', 'image/png', 'image/gif', 'application/pdf'],
-    cost_per_1m_input_tokens=1.25,
-    cost_per_1m_output_tokens=10.0,
+    cost_per_1m_input_tokens=0.005,
+    cost_per_1m_output_tokens=0.4,
 )
 ```
 
@@ -161,15 +166,15 @@ guarantee it will adhere to the schema. For predefined models, these
 configurations are attached automatically, even if we use strings:
 
 ```pycon
->>> gpt5 = OpenAI.model('gpt5')
->>> gpt5.config.supports_structured_output
+>>> gpt5_nano = OpenAI.model('gpt5_nano')
+>>> gpt5_nano.config.supports_structured_output
 True
 ```
 
 For the rest, however, this isn't the case:
 
 ```pycon
->>> o3.config.supports_structured_output
+>>> mistral.config.supports_structured_output
 None
 ```
 
@@ -177,7 +182,7 @@ So some features will not work as expected, unless we provide the configuration
 (or at least, those parts of it that matter for our scenario) as well:
 
 ```pycon
->>> o1 = OpenAI.model("o1", supports_structured_output=True)
+>>> mistral = OpenAI.model("o1", supports_structured_output=True)
 ```
 
 ### Generation
@@ -1163,8 +1168,8 @@ and Anthropic, just to mix things up a bit; all the code we need is:
 ...     grade: Literal["A", "B", "C"]
 ...     explanation: str | None
 
->>> writer = Gemini.lite2("Answer in 5-line limericks, nothing else.")
->>> critic = Anthropic.haiku35("Grade a limerick on its style and wit as A, B or C; if not A, explain what can be improved.")
+>>> writer = Gemini.lite2.conversation("Answer in 5-line limericks, nothing else.")
+>>> critic = Anthropic.haiku35.conversation("Grade a limerick on its style and wit as A, B or C; if not A, explain what can be improved.")
 >>> async with writer, critic:
 ...     limerick = writer.generate() # empty user input sends "." by default
 ...     for _ in range(10):
@@ -1310,6 +1315,54 @@ The `dev.py` script contains all the development-related tasks, mapped to Poe th
     ```sh
     $ poe clean
     ```
+
+### Running Models Locally
+
+This is not strictly speaking part of Llemon's documentation – but it's a handy
+reference on how to run models locally so that you can connect to them and
+experiment with the library.
+
+#### Ollama
+
+Install [Ollama](https://ollama.com/), choose a model from
+[Ollama's library](https://ollama.com/library), and run:
+
+```sh
+$ ollama pull {model} # e.g. mistral
+```
+
+You can always list all the available models with:
+
+```sh
+$ ollama list
+NAME              ID              SIZE      MODIFIED           
+mistral:latest    6577803aa9a0    4.4 GB    ...
+```
+
+And use them with Llemon like so:
+
+```pycon
+>>> from llemon import Ollama
+>>> model = Ollama.model("mistral")
+>>> await model.generate("When was Alan Turing born?")
+Ollama/mistral: Alan Turing, the British mathematician and computer science pioneer, was born on June 23, 1912.
+```
+
+If you want to use [HuggingFace](https://huggingface.co/), copy Ollama's private
+key from `~/.ollama/id_ed25519.pub`, go to your profile (upper right corner) >
+`Settings` > `SSH and GPG keys` > `Add SSH Key`, paste it in `SSH Public Key`
+and click `Add key`. Now you can use any model that has the `GFFU` tag, prefixed
+with `hf.co`:
+
+```sh
+$ ollama pull hf.co/{username}/{model} # e.g. bartowski/Mistral-7B-Instruct-v0.3-GGUF:latest
+```
+
+```pycon
+>>> model = Ollama.model("hf.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF")
+>>> await model.generate("When was Alan Turing born?")
+Ollama/hf.co/bartowski/Mistral-7B-Instruct-v0.3-GGUF: Alan Turing was born on June 23, 1912.
+```
 
 ## License
 

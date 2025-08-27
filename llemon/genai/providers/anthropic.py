@@ -11,6 +11,7 @@ from anthropic.types import (
     ContentBlockParam,
     DocumentBlockParam,
     ImageBlockParam,
+    MessageDeltaUsage,
     MessageParam,
     TextBlockParam,
     ToolChoiceAnyParam,
@@ -21,6 +22,7 @@ from anthropic.types import (
     ToolUseBlockParam,
     URLImageSourceParam,
     URLPDFSourceParam,
+    Usage,
 )
 from pydantic import BaseModel
 
@@ -31,8 +33,8 @@ from llemon.objects.generate import GenerateRequest, GenerateResponse
 from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
 from llemon.objects.tool import Call, Tool
-from llemon.types import NS, Error, ToolCalls, ToolStream
-from llemon.utils import ASSISTANT, SYSTEM, USER
+from llemon.types import NS, ToolCalls, ToolStream
+from llemon.utils import ASSISTANT, SYSTEM, USER, async_parallelize
 
 log = logging.getLogger(__name__)
 
@@ -191,9 +193,10 @@ class Anthropic(LLM):
                 tool_choice=self._tool_choice(request),
             )
         except anthropic.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = anthropic_response.id
-        self._check_stop_reason(anthropic_response.stop_reason, request.return_incomplete_message)
+        self._set_usage(response, anthropic_response.usage)
+        self._check_stop_reason(request, anthropic_response.stop_reason)
         texts: list[str] = []
         tools: ToolCalls = []
         for content in anthropic_response.content:
@@ -206,7 +209,7 @@ class Anthropic(LLM):
             return await self._generate(request, response, messages=messages)
         text = "".join(texts)
         if not text:
-            raise ValueError(f"no text in response from {self}")
+            raise request.error(f"{request} response has no text")
         log.debug(ASSISTANT + "%s", text)
         response.complete_text(text)
         return response
@@ -234,7 +237,7 @@ class Anthropic(LLM):
                 tool_choice=self._tool_choice(request),
             )
         except anthropic.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
 
         async def stream() -> AsyncIterator[str]:
             tool_stream: ToolStream = {}
@@ -242,9 +245,11 @@ class Anthropic(LLM):
                 request.id = events.request_id
                 async for event in events:
                     if event.type == "message_delta":
-                        self._check_stop_reason(event.delta.stop_reason, request.return_incomplete_message)
-                        if event.delta.stop_reason:
-                            break
+                        if not event.delta.stop_reason:
+                            continue
+                        self._set_usage(response, event.usage)
+                        self._check_stop_reason(request, event.delta.stop_reason)
+                        break
                     if event.type == "message_stop":
                         break
                     if event.type == "content_block_start":
@@ -305,9 +310,10 @@ class Anthropic(LLM):
                 tool_choice=self._tool_choice(request),
             )
         except anthropic.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = anthropic_response.id
-        self._check_stop_reason(anthropic_response.stop_reason, return_incomplete_messages=False)
+        self._set_usage(response, anthropic_response.usage)
+        self._check_stop_reason(request, anthropic_response.stop_reason)
         object: NS = {}
         tools: ToolCalls = []
         for content in anthropic_response.content:
@@ -320,7 +326,7 @@ class Anthropic(LLM):
             await self._run_tools(request, response, messages, tools)
             return await self._generate_object(request, response, messages=messages)
         if not object:
-            raise Error(f"no object in response from {self}")
+            raise request.error(f"{request} response has no object")
         log.debug(ASSISTANT + "%s", object)
         response.complete_object(request.schema.model_validate(object))
         return response
@@ -353,15 +359,15 @@ class Anthropic(LLM):
 
     def _check_stop_reason(
         self,
+        request: GenerateRequest,
         reason: Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn", "refusal"] | None,
-        return_incomplete_messages: bool,
     ) -> None:
         if reason == "refusal":
-            raise Error(f"response from {self} was blocked")
-        if reason == "max_tokens" and not return_incomplete_messages:
-            raise Error(f"response from {self} exceeded the maximum length")
-        if reason == "pause_turn" and not return_incomplete_messages:
-            raise Error(f"response from {self} took too long")
+            raise request.error(f"{request} was blocked")
+        if reason == "max_tokens" and not request.return_incomplete_message:
+            raise request.error(f"{request} response exceeded the maximum length")
+        if reason == "pause_turn" and not request.return_incomplete_message:
+            raise request.error(f"{request} took too long")
 
     async def _run_tools(
         self,
@@ -371,10 +377,15 @@ class Anthropic(LLM):
         tool_calls: ToolCalls,
     ) -> None:
         calls = [Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
-        await Call.async_run_all(calls)
+        await async_parallelize(call.run for call in calls)
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))
         response.calls.extend(calls)
+
+    def _set_usage(self, response: GenerateResponse, usage: Usage | MessageDeltaUsage) -> None:
+        response.input_tokens += usage.input_tokens or 0
+        response.cache_tokens += usage.cache_creation_input_tokens or 0
+        response.output_tokens += usage.output_tokens or 0
 
 
 def _optional[T](value: T | None) -> T | anthropic.NotGiven:

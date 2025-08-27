@@ -4,16 +4,15 @@ import copy
 import re
 import warnings
 from types import TracebackType
-from typing import Iterator, cast
+from typing import Iterator
 
 from pydantic import BaseModel
 
 from llemon.objects.file import File
-from llemon.objects.tool import resolve_tools
 from llemon.objects.rendering import Rendering
+from llemon.objects.tool import resolve_tools
 from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils import async_parallelize, schema_to_model
-
+from llemon.utils import async_parallelize
 
 SPACES = re.compile(r"\s+")
 
@@ -83,14 +82,18 @@ class Conversation:
 
     @classmethod
     def load(cls, data: NS) -> Conversation:
-        return load(Conversation, data)
+        return load(Conversation, data["conversation"], data)
 
     @property
     def llm(self) -> LLM:
         return self.model.llm
 
     def dump(self) -> NS:
-        return dump(self)
+        data, state = dump(self)
+        return dict(
+            conversation=data,
+            **state,
+        )
 
     def replace(
         self,
@@ -113,7 +116,7 @@ class Conversation:
     async def prepare(self) -> Conversation:
         self._assert_not_finished()
         self.history = self._copy_history()
-        await async_parallelize([(self.llm.prepare, (request, self._state), {}) for request, _ in self])
+        await async_parallelize((self.llm.prepare, request, self._state) for request, _ in self)
         return self
 
     async def finish(self, cleanup: bool = True) -> None:
@@ -249,7 +252,7 @@ class Conversation:
 
     async def generate_object[T: BaseModel](
         self,
-        schema: type[T] | NS,
+        schema: NS | type[T],
         message: str | None = None,
         *,
         save: bool = True,
@@ -259,6 +262,7 @@ class Conversation:
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        variants: int | None = None,
         temperature: float | None = None,
         seed: int | None = None,
         frequency_penalty: float | None = None,
@@ -266,15 +270,11 @@ class Conversation:
         repetition_penalty: float | None = None,
         top_p: float | None = None,
         top_k: int | None = None,
-        prediction: T | NS | None = None,
+        prediction: str | NS | T | None = None,
     ) -> GenerateObjectResponse[T]:
         self._assert_not_finished()
-        if isinstance(schema, dict):
-            model_class = cast(type[T], schema_to_model(schema))
-        else:
-            model_class = schema
         request = GenerateObjectRequest(
-            schema=model_class,
+            schema=schema,
             model=self.model,
             instructions=instructions or self.instructions,
             user_input=message,
@@ -284,6 +284,7 @@ class Conversation:
             files=files,
             tools=[*self.tools, *(tools or [])],
             use_tool=use_tool,
+            variants=variants,
             temperature=temperature,
             seed=seed,
             frequency_penalty=frequency_penalty,

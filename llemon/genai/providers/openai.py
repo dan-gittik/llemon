@@ -27,6 +27,7 @@ from openai.types.chat.chat_completion_content_part_param import (
 from openai.types.chat.chat_completion_content_part_param import File as ChatcompletionContentPartFileParam
 from openai.types.chat.chat_completion_content_part_param import FileFile as FileParam
 from openai.types.chat.chat_completion_message_tool_call_param import Function as FunctionParam
+from openai.types.completion_usage import CompletionUsage
 from openai.types.shared_params import FunctionDefinition, ResponseFormatJSONObject
 from pydantic import BaseModel
 
@@ -68,10 +69,10 @@ class OpenAI(LLM):
         await super().prepare(request, state)
         if request.files:
             log.debug("uploading files")
-        await async_parallelize([(self._upload_file, (file, state), {}) for file in request.files])
+        await async_parallelize((self._upload_file, file, state) for file in request.files)
 
     async def cleanup(self, state: NS) -> None:
-        await async_parallelize([(self._delete_file, (file_id,), {}) for file_id in state.pop(FILE_IDS, set())])
+        await async_parallelize((self._delete_file, file_id) for file_id in state.pop(FILE_IDS, set()))
         state.pop(FILE_HASHES, None)
         await super().cleanup(state)
 
@@ -98,11 +99,11 @@ class OpenAI(LLM):
             tokens = [str(i) for i in range(len(request.answers))]
             token_ids = await request.model.tokenizer.encode(*tokens)
             if len(token_ids) != len(request.answers):
-                raise Error(f"can't do classification with {len(request.answers)} answers")
+                raise request.error(f"can't do classification with {len(request.answers)} answers")
             logit_bias = {str(token_id): 100 for token_id in token_ids}
             generate_response = await self._generate(request, GenerateResponse(request), logit_bias=logit_bias)
             answer_num = int(generate_response.text)
-        elif request.model.config.supports_json:
+        elif request.model.config.supports_objects:
             log.debug("classifying with structured output")
             generate_object_request = request.to_object_request()
             generate_object_response = await self._generate_object(
@@ -115,10 +116,10 @@ class OpenAI(LLM):
             log.debug("classifying with generated text")
             generate_response = await self._generate(request, GenerateResponse(request))
             if not generate_response.text.isdigit():
-                raise Error(f"{self} failed to classify {request} (answer was not a number: {generate_response.text})")
+                raise request.error(f"{request} answer was not a number: {generate_response.text}")
             answer_num = int(generate_response.text)
         if not 0 <= answer_num < len(request.answers):
-            raise Error(f"{self} failed to classify {request} (answer number was out of range: {answer_num})")
+            raise request.error(f"{request} answer number was out of range: {answer_num}")
         answer = request.answers[answer_num]
         log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
         response.complete_answer(answer, reasoning)
@@ -128,7 +129,7 @@ class OpenAI(LLM):
         if not file.data and file.is_image:
             log.debug("%s is an image URL; skipping", file)
             return
-        await file.async_fetch()
+        await file.fetch()
         assert file.data is not None
         hash: File | None = state.get(FILE_HASHES, {}).get(file.md5)
         if hash:
@@ -262,9 +263,10 @@ class OpenAI(LLM):
                 logit_bias=logit_bias,
             )
         except openai.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = openai_response.id
-        result, is_tool = self._parse_choices(openai_response.choices, request.return_incomplete_message)
+        self._set_usage(response, openai_response.usage)
+        result, is_tool = self._parse_choices(request, openai_response.choices)
         if is_tool:
             await self._run_tools(request, response, messages, cast(ToolCalls, result))
             return await self._generate(request, response, messages=messages, json=json)
@@ -300,16 +302,19 @@ class OpenAI(LLM):
                 stop=_optional(request.stop),
                 extra_body=extra_body,
                 stream=True,
+                stream_options={"include_usage": True},
             )
         except openai.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
 
         async def stream() -> AsyncIterator[str]:
             tool_stream: ToolStream = {}
             async for chunk in openai_response:
-                if request.id is None:
+                if not chunk.choices:
                     request.id = chunk.id
-                result, is_tool = self._parse_stream_choices(chunk.choices, request.return_incomplete_message)
+                    self._set_usage(response, chunk.usage)
+                    break
+                result, is_tool = self._parse_stream_choices(request, chunk.choices)
                 if is_tool:
                     for index, id, name, arguments in cast(ToolDeltas, result):
                         if index not in tool_stream:
@@ -361,9 +366,10 @@ class OpenAI(LLM):
                 response_format=request.schema,
             )
         except openai.APIError as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = openai_response.id
-        result, is_tool = self._parse_data_choices(openai_response.choices, return_incomplete_message=False)
+        self._set_usage(response, openai_response.usage)
+        result, is_tool = self._parse_object_choices(request, openai_response.choices)
         if is_tool:
             await self._run_tools(request, response, messages, cast(ToolCalls, result))
             return await self._generate_object(request, response, messages=messages)
@@ -421,50 +427,49 @@ class OpenAI(LLM):
 
     def _parse_choices(
         self,
+        request: GenerateRequest,
         choices: list[Choice],
-        return_incomplete_message: bool,
     ) -> tuple[list[str], Literal[False]] | tuple[ToolCalls, Literal[True]]:
         if not choices:
-            raise Error(f"no response from {self}")
+            raise request.error(f"{request} has no response")
         results: list[str] = []
         for choice in choices:
-            print(choice)
-            self._check_finish_reason(choice, return_incomplete_message)
+            self._check_finish_reason(request, choice)
             tools = self._choice_tools(choice)
             if tools:
                 return tools, True
             if not choice.message.content:
-                raise Error(f"no content in response from {self}")
+                raise request.error(f"{request} response has no content")
             results.append(choice.message.content)
         return results, False
 
-    def _parse_data_choices[T: BaseModel](
+    def _parse_object_choices[T: BaseModel](
         self,
+        request: GenerateObjectRequest[T],
         choices: list[ParsedChoice[T]],
-        return_incomplete_message: bool,
     ) -> tuple[list[T], Literal[False]] | tuple[ToolCalls, Literal[True]]:
         if not choices:
-            raise Error(f"no response from {self}")
+            raise request.error(f"{request} has no response")
         results: list[T] = []
         for choice in choices:
-            self._check_finish_reason(choice, return_incomplete_message)
+            self._check_finish_reason(request, choice)
             tools = self._choice_tools(choice)
             if tools:
                 return tools, True
             if not choice.message.parsed:
-                raise Error(f"no data in response from {self}")
+                raise request.error(f"{request} response has no data")
             results.append(choice.message.parsed)
         return results, False
 
     def _parse_stream_choices(
         self,
+        request: GenerateStreamRequest,
         choices: list[StreamChoice],
-        return_incomplete_message: bool,
     ) -> tuple[str, Literal[False]] | tuple[ToolDeltas, Literal[True]]:
         if not choices:
-            raise Error(f"no response from {self}")
+            raise request.error(f"{request} has no response")
         choice = choices[0]
-        self._check_finish_reason(choice, return_incomplete_message)
+        self._check_finish_reason(request, choice)
         if choice.delta.tool_calls:
             tool_deltas: ToolDeltas = []
             if choice.delta.tool_calls:
@@ -483,7 +488,7 @@ class OpenAI(LLM):
         text = choice.delta.content or ""
         return text, False
 
-    def _check_finish_reason(self, choice: Choice | StreamChoice, return_incomplete_message: bool) -> None:
+    def _check_finish_reason(self, request: GenerateRequest, choice: Choice | StreamChoice) -> None:
         match choice.finish_reason:
             case "stop":
                 if isinstance(choice, Choice):
@@ -491,19 +496,21 @@ class OpenAI(LLM):
                 else:
                     refusal = choice.delta.refusal
                 if refusal:
-                    raise Error(f"response from {self} was blocked: {refusal}")
+                    raise request.error(f"{request} was refused: {refusal}")
             case "length":
-                if not return_incomplete_message:
-                    raise Error(f"response from {self} exceeded the maximum length")
+                if not request.return_incomplete_message:
+                    raise request.error(f"{request} response exceeded the maximum length")
             case "tool_calls" | "function_call":
                 pass
             case "content_filter":
-                raise Error(f"response from {self} was blocked")
+                raise request.error(f"{request} was blocked")
 
     def _choice_tools(self, choice: Choice | ParsedChoice) -> ToolCalls | None:
         tool_calls: ToolCalls = []
         if choice.message.tool_calls:
             for tool in choice.message.tool_calls:
+                if tool.type != "function":
+                    continue
                 tool_calls.append((tool.id, tool.function.name, json.loads(tool.function.arguments)))
         return tool_calls
 
@@ -515,10 +522,24 @@ class OpenAI(LLM):
         tools: ToolCalls,
     ) -> None:
         calls = [Call(id, request.tools_dict[name], args) for id, name, args in tools]
-        await Call.async_run_all(calls)
+        await async_parallelize(call.run for call in calls)
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))
         response.calls.extend(calls)
+
+    def _set_usage(self, response: GenerateResponse, usage: CompletionUsage | None) -> None:
+        if usage is None:
+            return
+        response.input_tokens += usage.prompt_tokens or 0
+        if usage.prompt_tokens_details:
+            cached_tokens = usage.prompt_tokens_details.cached_tokens or 0
+            response.input_tokens -= cached_tokens
+            response.cache_tokens += cached_tokens
+        response.output_tokens += usage.completion_tokens or 0
+        if usage.completion_tokens_details:
+            reasoning_tokens = usage.completion_tokens_details.reasoning_tokens or 0
+            response.output_tokens -= reasoning_tokens
+            response.reasoning_tokens += reasoning_tokens
 
 
 def _optional[T](value: T | None) -> T | openai.NotGiven:

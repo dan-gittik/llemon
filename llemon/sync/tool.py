@@ -9,8 +9,8 @@ from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 
 from pydantic import BaseModel, ConfigDict
 
-from llemon.types import NS, Error, ToolsArgument
-from llemon.utils import TOOL, Superclass, to_async, trim
+from llemon.sync.types import NS, Error, ToolsArgument
+from llemon.utils import TOOL, Superclass, to_sync, trim
 
 log = logging.getLogger(__name__)
 PARAMETER_SCHEMAS: dict[Callable[..., Any], NS] = {}
@@ -131,10 +131,10 @@ class Call:
             result["return_value"] = return_value
         return json.dumps(result)
 
-    async def run(self) -> None:
+    def run(self) -> None:
         log.debug(TOOL + "%s", self.signature)
         try:
-            self._return_value = await to_async(self.tool.function)(**self.arguments)
+            self._return_value = to_sync(self.tool.function)(**self.arguments)
             log.debug(TOOL + "%s returned %r", self.signature, self._return_value)
         except Exception as error:
             self._error = self._format_error(error)

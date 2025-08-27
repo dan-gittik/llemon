@@ -3,7 +3,7 @@ from __future__ import annotations
 import openai
 
 from llemon.genai.llm_model_property import LLMModelProperty
-from llemon.providers.openai import OpenAI
+from llemon.genai.providers.openai import OpenAI
 
 
 class DeepInfra(OpenAI):

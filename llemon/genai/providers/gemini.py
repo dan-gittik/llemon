@@ -14,6 +14,7 @@ from google.genai.types import (
     FunctionDeclaration,
     GenerateContentConfig,
     GenerateContentResponse,
+    GenerateContentResponseUsageMetadata,
     HttpOptions,
     ModelContent,
     Part,
@@ -32,7 +33,7 @@ from llemon.objects.generate_object import GenerateObjectRequest, GenerateObject
 from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
 from llemon.objects.tool import Call
 from llemon.types import NS, Error, ToolCalls
-from llemon.utils import ASSISTANT, SYSTEM, USER
+from llemon.utils import ASSISTANT, SYSTEM, USER, async_parallelize
 
 log = logging.getLogger(__name__)
 
@@ -144,7 +145,7 @@ class Gemini(LLM):
             if text:
                 parts.append(Part.from_text(text=text))
             for file in files:
-                await file.async_fetch()
+                await file.fetch()
                 assert file.data is not None
                 part = Part.from_bytes(data=file.data, mime_type=file.mimetype)
                 parts.append(part)
@@ -212,9 +213,10 @@ class Gemini(LLM):
                 config=config,
             )
         except Exception as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = gemini_response.response_id
-        result, is_tool = self._parse_response(gemini_response, request.return_incomplete_message)
+        self._set_usage(response, gemini_response.usage_metadata)
+        result, is_tool = self._parse_response(request, gemini_response)
         if is_tool:
             await self._run_tools(request, response, contents, cast(ToolCalls, result))
             return await self._generate(request, response, config=config, contents=contents)
@@ -242,18 +244,19 @@ class Gemini(LLM):
                 config=config,
             )
         except Exception as error:
-            raise Error(error)
+            raise request.error(str(error))
 
         async def stream() -> AsyncIterator[str]:
             tool_calls: ToolCalls = []
             async for chunk in gemini_response:
-                if request.id is None:
-                    request.id = chunk.response_id
-                result, is_tool = self._parse_response(chunk, request.return_incomplete_message)
+                result, is_tool = self._parse_response(request, chunk)
                 if is_tool:
                     tool_calls.extend(cast(ToolCalls, result))
                 elif result:
                     yield cast(str, result[0])
+                if chunk.usage_metadata:
+                    request.id = chunk.response_id
+                    self._set_usage(response, chunk.usage_metadata)
             if tool_calls:
                 await self._run_tools(request, response, contents, tool_calls)
                 await self._generate_stream(request, response, config=config, contents=contents)
@@ -285,9 +288,10 @@ class Gemini(LLM):
                 config=config,
             )
         except Exception as error:
-            raise Error(error)
+            raise request.error(str(error))
         request.id = gemini_response.response_id
-        result, is_tool = self._parse_response(gemini_response, return_incomplete_message=False)
+        self._set_usage(response, gemini_response.usage_metadata)
+        result, is_tool = self._parse_response(request, gemini_response)
         if is_tool:
             await self._run_tools(request, response, contents, cast(ToolCalls, result))
             return await self._generate_object(request, response, config=config, contents=contents)
@@ -300,22 +304,22 @@ class Gemini(LLM):
 
     def _parse_response(
         self,
+        request: GenerateRequest,
         response: GenerateContentResponse,
-        return_incomplete_message: bool,
     ) -> tuple[list[str], Literal[False]] | tuple[ToolCalls, Literal[True]]:
         if not response.candidates:
-            raise Error(f"{self} returned no candidates")
+            raise request.error(f"{request} has no response")
         for candidate in response.candidates:
             match candidate.finish_reason:
                 case None | FinishReason.STOP:
                     pass
                 case FinishReason.MAX_TOKENS:
-                    if not return_incomplete_message:
-                        raise Error(f"{self} reached the maximum number of tokens")
+                    if not request.return_incomplete_message:
+                        raise request.error(f"{request} response exceeded the maximum length")
                 case _:
                     if response.prompt_feedback and response.prompt_feedback.block_reason_message:
-                        raise Error(f"{self} was blocked: {response.prompt_feedback.block_reason_message}")
-                    raise Error(f"{self} was aborted: {candidate.finish_message}")
+                        raise request.error(f"{request} was blocked: {response.prompt_feedback.block_reason_message}")
+                    raise request.error(f"{request} was aborted: {candidate.finish_message}")
         if response.function_calls:
             tool_calls: ToolCalls = []
             for function_call in response.function_calls:
@@ -324,11 +328,11 @@ class Gemini(LLM):
         result: list[str] = []
         for candidate in response.candidates:
             if not candidate.content:
-                raise Error(f"{self} returned no content")
+                raise request.error(f"{request} response has no content")
             if not candidate.content.parts:
-                raise Error(f"{self} returned no parts")
+                raise request.error(f"{request} response has no parts")
             if not candidate.content.parts[0].text:
-                raise Error(f"{self} returned no text")
+                raise request.error(f"{request} response has no text")
             result.append(candidate.content.parts[0].text)
         return result, False
 
@@ -340,7 +344,19 @@ class Gemini(LLM):
         tool_calls: ToolCalls,
     ) -> None:
         calls = [Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
-        await Call.async_run_all(calls)
+        await async_parallelize(call.run for call in calls)
         contents.append(self._tool_call(calls))
         contents.append(self._tool_results(calls))
         response.calls.extend(calls)
+
+    def _set_usage(
+        self,
+        response: GenerateResponse,
+        usage_metadata: GenerateContentResponseUsageMetadata | None,
+    ) -> None:
+        if usage_metadata is None:
+            return
+        response.input_tokens += usage_metadata.prompt_token_count or 0
+        response.cache_tokens += usage_metadata.cached_content_token_count or 0
+        response.output_tokens += usage_metadata.candidates_token_count or 0
+        response.reasoning_tokens += usage_metadata.thoughts_token_count or 0

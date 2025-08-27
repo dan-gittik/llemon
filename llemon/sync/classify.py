@@ -21,13 +21,13 @@ class ClassifyRequest(GenerateRequest):
         history: History | None = None,
         question: str,
         answers: list[str] | type[bool],
-        user_input: str | None = None,
+        user_input: str,
         reasoning: bool = False,
         null_answer: bool = True,
         context: NS | None = None,
-        render: RenderArgument | None = None,
+        render: RenderArgument = None,
         files: FilesArgument = None,
-        tools: ToolsArgument | None = None,
+        tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
     ) -> None:
         super().__init__(
@@ -63,7 +63,7 @@ class ClassifyRequest(GenerateRequest):
 
     def check_supported(self) -> None:
         super().check_supported()
-        if self.reasoning and not self.model.config.supports_json:
+        if self.reasoning and not self.model.config.supports_objects:
             raise Error(f"{self.model} doesn't support reasoning in classification")
 
     def to_object_request(self) -> GenerateObjectRequest:

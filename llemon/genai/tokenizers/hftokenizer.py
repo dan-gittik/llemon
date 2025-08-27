@@ -1,5 +1,5 @@
-from functools import cached_property
 import os
+from functools import cached_property
 from typing import ClassVar, Sequence, cast
 
 os.environ["TRANSFORMERS_NO_ADVISORY_WARNINGS"] = "1"
@@ -8,8 +8,8 @@ from transformers import AutoTokenizer
 from transformers.tokenization_utils_fast import PreTrainedTokenizerFast
 
 from llemon.genai.llm_model import LLMModel
-from llemon.genai.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
 from llemon.genai.tokenizers.count_tokens import count_tokens
+from llemon.genai.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
 from llemon.objects.generate import GenerateRequest
 
 TOKENIZERS: dict[str, PreTrainedTokenizerFast] = {}
@@ -40,9 +40,9 @@ class HFTokenizer(LLMTokenizer):
     async def decode(self, *ids: int) -> str:
         tokens = cast(list[str], self._tokenizer.convert_ids_to_tokens(list(ids)))
         return self._tokenizer.convert_tokens_to_string(tokens)
-    
+
     async def _count(self, request: GenerateRequest) -> int:
-        return count_tokens(request, self.__count)
+        return await count_tokens(request, self.__count)
 
     def __count(self, text: str) -> int:
         return len(self._tokenizer(text, add_special_tokens=False)["input_ids"])

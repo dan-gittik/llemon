@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime as dt
 from functools import cached_property
 
-from llemon.types import NS, Error, History
+from llemon.sync.types import NS, Error, History
 from llemon.utils import Superclass, now
 
 
@@ -23,12 +23,12 @@ class Request(Superclass):
 
     @classmethod
     def load(cls, data: NS) -> Request:
-        from llemon.serialization import load
+        from llemon.sync.serialization import load
 
         return load(cls, data["request"], data)
 
     def dump(self) -> NS:
-        from llemon.serialization import dump
+        from llemon.sync.serialization import dump
 
         data, state = dump(self)
         return dict(
@@ -61,7 +61,7 @@ class Response(Superclass):
 
     @classmethod
     def load(cls, data: NS) -> Response:
-        from llemon.serialization import load
+        from llemon.sync.serialization import load
 
         request = Request.load(data["request"])
         return load(cls, data["response"], data, request=request)
@@ -73,7 +73,7 @@ class Response(Superclass):
         return (self.ended - self.started).total_seconds()
 
     def dump(self) -> NS:
-        from llemon.serialization import dump
+        from llemon.sync.serialization import dump
 
         request = self.request.dump()
         data, state = dump(self)

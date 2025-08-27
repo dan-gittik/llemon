@@ -9,19 +9,19 @@ from dotenv import dotenv_values
 from pydantic import BaseModel
 
 from llemon.sync.types import NS, Error, History
+from llemon.utils import Superclass
 
 log = logging.getLogger(__name__)
 
 
-class LLM:
+class LLM(Superclass):
 
-    classes: ClassVar[dict[str, type[LLM]]] = {}
     configurations: ClassVar[NS] = {}
     instance: ClassVar[LLM | None] = None
     models: ClassVar[dict[str, LLMModel]] = {}
 
     def __init_subclass__(cls) -> None:
-        cls.classes[cls.__name__] = cls
+        super().__init_subclass__()
         cls.instance = None
         cls.models = {}
 
@@ -140,7 +140,7 @@ class LLM:
 
 
 from llemon.sync.llm_model import LLMModel
-from llemon.genai.llm_model_config import LLMModelConfig
+from llemon.sync.llm_model_config import LLMModelConfig
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse

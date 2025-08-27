@@ -97,7 +97,7 @@ class Rendering:
         if matches := list(self._async_regex.finditer(text)):
             ctx = {key: to_async(value) if callable(value) else value for key, value in context.items()}
             expressions = [match.group(1) for match in matches]
-            evaluations = await async_parallelize([(self._evaluate, (exp, ctx), {}) for exp in expressions])
+            evaluations = await async_parallelize((self._evaluate, exp, ctx) for exp in expressions)
             output: list[str] = []
             offset = 0
             for match, evaluation in zip(matches, evaluations):

@@ -96,7 +96,7 @@ class Rendering:
         if matches := list(self._regex.finditer(text)):
             ctx = {key: to_sync(value) if callable(value) else value for key, value in context.items()}
             expressions = [match.group(1) for match in matches]
-            evaluations = parallelize([(self._evaluate, (exp, ctx), {}) for exp in expressions])
+            evaluations = parallelize((self._evaluate, exp, ctx) for exp in expressions)
             output: list[str] = []
             offset = 0
             for match, evaluation in zip(matches, evaluations):

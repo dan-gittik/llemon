@@ -6,10 +6,10 @@ from llemon import (
     LLM,
     Anthropic,
     DeepInfra,
+    Error,
     Gemini,
     LLMModel,
     OpenAI,
-    errors,
 )
 
 
@@ -22,11 +22,11 @@ from llemon import (
     ]
 )
 def model(request: pytest.FixtureRequest) -> Iterator[LLMModel]:
-    provider: LLM = request.param[0]
+    provider: type[LLM] = request.param[0]
     model: str = request.param[1]
     try:
         yield provider.model(model)
-    except errors.ConfigurationError:
+    except Error:
         pytest.skip(f"provider {provider.__name__} doesn isn't available")
     provider.models.clear()
     provider.instance = None

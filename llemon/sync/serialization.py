@@ -7,20 +7,18 @@ from typing import Any, Callable, cast, overload
 from pydantic import BaseModel
 from srlz import Serialization, SimpleType
 
-import llemon.providers  # noqa: F401
-import llemon.tools  # noqa: F401
 from llemon.sync.conversation import Conversation
 from llemon.sync.llm import LLM
 from llemon.sync.llm_model import LLMModel
-from llemon.genai.llm_model_config import LLM_MODEL_CONFIGS, LLMModelConfig
+from llemon.sync.llm_model_config import LLM_MODEL_CONFIGS, LLMModelConfig
 from llemon.sync.classify import ClassifyRequest, ClassifyResponse
-from llemon.objects.file import File
+from llemon.sync.file import File
 from llemon.sync.generate import GenerateRequest, GenerateResponse
 from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
 from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
 from llemon.sync.rendering import Rendering
-from llemon.objects.request import Request, Response
-from llemon.objects.tool import Call, Tool, Toolbox, undefined
+from llemon.sync.request import Request, Response
+from llemon.sync.tool import Call, Tool, Toolbox, undefined
 from llemon.sync.types import NS, History
 from llemon.utils import concat, schema_to_model
 
@@ -47,21 +45,21 @@ def deserialize_date(date: SimpleType) -> dt.date:
     return dt.date.fromisoformat(date)
 
 
-def dump(obj: Any) -> NS:
+def dump(obj: Any) -> tuple[NS, NS]:
     type_ = type(obj)
     if type_ not in dumpers:
         raise ValueError(f"{type_.__name__} is not serializable")
     state: NS = {}
     data = dumpers[type_](obj, state)
-    return serialization.serialize(state | data)
+    return serialization.serialize(data), serialization.serialize(state)
 
 
-def load[T](cls: type[T], data: NS) -> T:
+def load[T](cls: type[T], data: NS, state: NS, **kwargs: Any) -> T:
     if cls not in loaders:
         raise ValueError(f"{cls.__name__} is not deserializable")
     data = serialization.deserialize(data)
-    state = State(data)
-    result = loaders[cls]("$", data, state)
+    state = serialization.deserialize(state)
+    result = loaders[cls]("$", data, State(state), **kwargs)
     return cast(T, result)
 
 
@@ -93,7 +91,7 @@ def dump_conversation(obj: Conversation, state: NS) -> NS:
                 response=dump_response(response, state),
             )
         )
-    conversation = filtered_dict(
+    return filtered_dict(
         model=obj.model.name,
         instructions=obj.instructions,
         context=obj.context,
@@ -101,7 +99,6 @@ def dump_conversation(obj: Conversation, state: NS) -> NS:
         tools=[tool.name for tool in obj.tools],
         history=history,
     )
-    return dict(conversation=conversation)
 
 
 @loader(Conversation)
@@ -143,7 +140,7 @@ def dump_model(obj: LLMModel, state: NS) -> NS:
 
 @loader(LLMModel)
 def load_model(prefix: str, data: NS, state: State) -> LLMModel:
-    provider = get_subclass(LLM, get(f"{prefix}.provider", data, str))
+    provider = LLM.get_subclass(get(f"{prefix}.provider", data, str))
     return provider.model(
         name=get(f"{prefix}.name", data, str),
         **get_dict(f"{prefix}.config", data),
@@ -155,7 +152,7 @@ def dump_model_config(obj: LLMModelConfig, state: NS) -> NS:
     if obj.name not in LLM_MODEL_CONFIGS:
         return obj.model_dump()
     data = obj.model_dump()
-    for key, value in LLM_MODEL_CONFIGS[obj.name].model_dump().items():
+    for key, value in LLM_MODEL_CONFIGS[obj.name].items():
         if data[key] == value:
             del data[key]
     return data
@@ -265,7 +262,7 @@ def dump_toolbox(obj: Toolbox, state: NS) -> NS:
 
 @loader(Toolbox)
 def load_toolbox(prefix: str, data: NS, state: State) -> Toolbox:
-    toolbox_class = get_subclass(Toolbox, get(f"{prefix}.type", data, str))
+    toolbox_class = Toolbox.get_subclass(get(f"{prefix}.type", data, str))
     toolbox = toolbox_class(**get_dict(f"{prefix}.init", data))
     toolbox._suffix = get(f"{prefix}.suffix", data, str)
     return toolbox
@@ -302,7 +299,7 @@ def dump_request(obj: Request, state: NS) -> NS:
 
 
 def load_request(prefix: str, data: NS, state: State) -> Request:
-    request_class = get_subclass(Request, get(f"{prefix}.type", data, str))
+    request_class = Request.get_subclass(get(f"{prefix}.type", data, str))
     return loaders[request_class](prefix, data, state)
 
 
@@ -317,7 +314,7 @@ def dump_response(obj: Response, state: NS) -> NS:
 
 
 def load_response(prefix: str, data: NS, state: State, request: Request) -> Response:
-    response_class = get_subclass(Response, get(f"{prefix}.type", data, str))
+    response_class = Response.get_subclass(get(f"{prefix}.type", data, str))
     response: Response = loaders[response_class](prefix, data, state, request=request)
     response.started = dt.datetime.fromisoformat(get(f"{prefix}.started", data, str))
     response.ended = dt.datetime.fromisoformat(get(f"{prefix}.ended", data, str))
@@ -400,6 +397,10 @@ def load_generate_request[T: GenerateRequest](
 def dump_generate_response(obj: GenerateResponse, state: NS) -> NS:
     return dict(
         calls=[dump_call(call, state) for call in obj.calls],
+        input_tokens=obj.input_tokens,
+        cache_tokens=obj.cache_tokens,
+        output_tokens=obj.output_tokens,
+        reasoning_tokens=obj.reasoning_tokens,
         texts=obj._texts,
         selected=obj._selected,
     )
@@ -433,6 +434,10 @@ def load_generate_response[T: GenerateResponse](
         call = cast(NS, call)
         calls.append(load_call(f"{prefix}.calls[{n}]", call, state))
     response.calls = calls
+    response.input_tokens = get(f"{prefix}.input_tokens", data, int)
+    response.cache_tokens = get(f"{prefix}.cache_tokens", data, int)
+    response.output_tokens = get(f"{prefix}.output_tokens", data, int)
+    response.reasoning_tokens = get(f"{prefix}.reasoning_tokens", data, int)
     response._texts = get(f"{prefix}.texts", data, list)
     response._selected = get(f"{prefix}.selected", data, int)
     return response
@@ -612,10 +617,3 @@ def get_dict(path: str, data: NS) -> NS:
     if any(not isinstance(key, str) for key in namespace):
         raise ValueError(f"{path} must be a dictionary with string keys")
     return namespace
-
-
-def get_subclass[T](base: type[T], name: str) -> type[T]:
-    classes = {subclass.__name__: subclass for subclass in base.__subclasses__()}
-    if name not in classes:
-        raise ValueError(f"{base.__name__} {name!r} does not exist (available {base.__name__}s are {concat(classes)})")
-    return classes[name]

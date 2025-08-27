@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from llemon.sync.llm_model import LLMModel
 from llemon.sync.generate import GenerateRequest
 from llemon.sync.generate_object import GenerateObjectRequest
-from llemon.sync.types import Error, NS, RenderArgument, FilesArgument, ToolsArgument
+from llemon.sync.types import NS, Error, FilesArgument, RenderArgument, ToolsArgument
 from llemon.utils import concat, schema_to_model
 
 
@@ -78,7 +78,7 @@ class LLMTokenizer:
 
     def parse(self, text: str) -> Sequence[LLMToken]:
         raise self._unsupported()
-    
+
     def _count(self, request: GenerateRequest) -> int:
         return self.model.llm.count_tokens(request)
 
