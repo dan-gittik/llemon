@@ -1,15 +1,16 @@
 from __future__ import annotations
-
 from functools import cached_property
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from llemon.objects.generate import GenerateRequest, GenerateResponse
-from llemon.objects.generate_object import GenerateObjectRequest
+import llemon
 from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils import schema_to_model, trim
 
+if TYPE_CHECKING:
+    from llemon import LLM, GenerateObjectRequest
 
-class ClassifyRequest(GenerateRequest):
+
+class ClassifyRequest(llemon.GenerateRequest):
 
     BOOLEAN_ANSWERS: ClassVar[list[str]] = ["false", "true"]
     NULL_ANSWER: ClassVar[str] = "none of the above"
@@ -17,7 +18,7 @@ class ClassifyRequest(GenerateRequest):
     def __init__(
         self,
         *,
-        model: LLMModel,
+        llm: LLM,
         history: History | None = None,
         question: str,
         answers: list[str] | type[bool],
@@ -31,7 +32,7 @@ class ClassifyRequest(GenerateRequest):
         use_tool: bool | str | None = None,
     ) -> None:
         super().__init__(
-            model=model,
+            llm=llm,
             history=history,
             user_input=user_input,
             context=context,
@@ -57,14 +58,18 @@ class ClassifyRequest(GenerateRequest):
             self.return_incomplete_message = True
         self.instructions = self._prepare_instructions()
 
+    def __str__(self) -> str:
+        question = f"{self.question!r} [{'/'.join(self.answers)}]"
+        return f"{self.llm}.classify({question!r}, {self.user_input!r})"
+
     @cached_property
     def use_logit_biasing(self) -> bool:
-        return bool(self.model.config.supports_logit_biasing and not self.reasoning)
+        return bool(self.llm.config.supports_logit_biasing and not self.reasoning)
 
     def check_supported(self) -> None:
         super().check_supported()
-        if self.reasoning and not self.model.config.supports_objects:
-            raise Error(f"{self.model} doesn't support reasoning in classification")
+        if self.reasoning and not self.llm.config.supports_objects:
+            raise Error(f"{self.llm} doesn't support reasoning in classification")
 
     def to_object_request(self) -> GenerateObjectRequest:
         properties = {
@@ -83,7 +88,7 @@ class ClassifyRequest(GenerateRequest):
             "properties": properties,
         }
         return GenerateObjectRequest(
-            model=self.model,
+            llm=self.llm,
             schema=schema_to_model(schema),
             history=self.history,
             instructions=self._prepare_instructions(),
@@ -118,7 +123,7 @@ class ClassifyRequest(GenerateRequest):
         )
 
 
-class ClassifyResponse(GenerateResponse):
+class ClassifyResponse(llemon.GenerateResponse):
 
     request: ClassifyRequest
 
@@ -128,7 +133,7 @@ class ClassifyResponse(GenerateResponse):
         self.reasoning: str | None = None
 
     def __str__(self) -> str:
-        return f"{self.request.model}: {self.answer}"
+        return f"{self.request.llm}: {self.answer}"
 
     def complete_answer(self, answer: str, reasoning: str | None = None) -> None:
         self.answer = answer
@@ -137,6 +142,3 @@ class ClassifyResponse(GenerateResponse):
         if reasoning:
             text = f"{text} ({reasoning})"
         super().complete_text(text)
-
-
-from llemon.genai.llm_model import LLMModel

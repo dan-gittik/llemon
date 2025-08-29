@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator, Literal, cast
+from typing import TYPE_CHECKING, Iterator, Literal, cast
 
 from google import genai
 from google.genai.types import (
@@ -25,26 +25,32 @@ from google.genai.types import (
 )
 from pydantic import BaseModel
 
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model_property import LLMModelProperty
-from llemon.sync.file import File
-from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.sync.tool import Call
+import llemon.sync as llemon
 from llemon.sync.types import NS, Error, ToolCalls
-from llemon.utils import ASSISTANT, SYSTEM, USER, parallelize
+from llemon.utils import Emoji, parallelize
+
+if TYPE_CHECKING:
+    from llemon.sync import (
+        Call,
+        File,
+        GenerateObjectRequest,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamRequest,
+        GenerateStreamResponse,
+    )
 
 log = logging.getLogger(__name__)
 
 
-class Gemini(LLM):
+class Gemini(llemon.LLMProvider):
 
-    pro25 = LLMModelProperty("gemini-2.5-pro")
-    flash25 = LLMModelProperty("gemini-2.5-flash")
-    lite25 = LLMModelProperty("gemini-2.5-flash-lite")
-    flash2 = LLMModelProperty("gemini-2.0-flash")
-    lite2 = LLMModelProperty("gemini-2.0-flash-lite")
+    pro25 = llemon.LLMProperty("gemini-2.5-pro")
+    flash25 = llemon.LLMProperty("gemini-2.5-flash")
+    lite25 = llemon.LLMProperty("gemini-2.5-flash-lite")
+    flash2 = llemon.LLMProperty("gemini-2.0-flash")
+    lite2 = llemon.LLMProperty("gemini-2.0-flash-lite")
 
     def __init__(
         self,
@@ -66,19 +72,19 @@ class Gemini(LLM):
     def count_tokens(self, request: GenerateRequest) -> int:
         contents = self._contents(request)
         response = self.client.models.count_tokens(
-            model=request.model.name,
+            model=request.llm.model,
             contents=contents,
         )
         return response.total_tokens or 0
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return self._generate(request, GenerateResponse(request))
+        return self._generate(request, llemon.GenerateResponse(request))
 
     def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return self._generate_stream(request, GenerateStreamResponse(request))
+        return self._generate_stream(request, llemon.GenerateStreamResponse(request))
 
     def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        return self._generate_object(request, GenerateObjectResponse(request))
+        return self._generate_object(request, llemon.GenerateObjectResponse(request))
 
     def _config(self, request: GenerateRequest) -> GenerateContentConfig:
         config = GenerateContentConfig(
@@ -113,7 +119,7 @@ class Gemini(LLM):
                     allowed_function_names=[request.get_tool_name(request.use_tool)],
                 )
             config.tool_config = ToolConfig(function_calling_config=function_config)
-        if isinstance(request, GenerateObjectRequest):
+        if isinstance(request, llemon.GenerateObjectRequest):
             config.response_mime_type = "application/json"
             config.response_schema = request.schema
         return config
@@ -121,18 +127,19 @@ class Gemini(LLM):
     def _contents(self, request: GenerateRequest) -> list[Content]:
         contents: list[Content] = []
         if request.instructions:
-            log.debug(SYSTEM + "%s", request.render_instructions())
+            log.debug(Emoji.SYSTEM + "%s", request.render_instructions())
         if request.history:
             self._log_history(request.history)
             for request_, response_ in request.history:
-                if not isinstance(request_, GenerateRequest) or not isinstance(response_, GenerateResponse):
+                if not isinstance(request_, llemon.GenerateRequest):
                     continue
+                assert isinstance(response_, llemon.GenerateResponse)
                 contents.append(self._user(request_.user_input, request_.files))
                 if response_.calls:
                     contents.append(self._tool_call(response_.calls))
                     contents.append(self._tool_results(response_.calls))
                 contents.append(self._assistant(response_.text))
-        log.debug(USER + "%s", request.user_input)
+        log.debug(Emoji.USER + "%s", request.user_input)
         contents.append(self._user(request.user_input, request.files))
         return contents
 
@@ -208,7 +215,7 @@ class Gemini(LLM):
             contents = self._contents(request)
         try:
             gemini_response = self.client.models.generate_content(
-                model=request.model.name,
+                model=request.llm.model,
                 contents=contents,
                 config=config,
             )
@@ -222,7 +229,7 @@ class Gemini(LLM):
             return self._generate(request, response, config=config, contents=contents)
         result = cast(list[str], result)
         for variant in result:
-            log.debug(ASSISTANT + "%s", variant)
+            log.debug(Emoji.ASSISTANT + "%s", variant)
         response.complete_text(*result)
         return response
 
@@ -239,7 +246,7 @@ class Gemini(LLM):
             contents = self._contents(request)
         try:
             gemini_response = self.client.models.generate_content_stream(
-                model=request.model.name,
+                model=request.llm.model,
                 contents=contents,
                 config=config,
             )
@@ -265,7 +272,7 @@ class Gemini(LLM):
                     yield delta
             else:
                 response.complete_stream()
-                log.debug(ASSISTANT + "%s", response.text)
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
 
         response.stream = stream()
         return response
@@ -283,7 +290,7 @@ class Gemini(LLM):
             contents = self._contents(request)
         try:
             gemini_response = self.client.models.generate_content(
-                model=request.model.name,
+                model=request.llm.model,
                 contents=contents,
                 config=config,
             )
@@ -298,7 +305,7 @@ class Gemini(LLM):
         result = cast(list[str], result)
         objects = [request.schema.model_validate(json.loads(variant)) for variant in result]
         for variant in objects:
-            log.debug(ASSISTANT + "%s", variant)
+            log.debug(Emoji.ASSISTANT + "%s", variant)
         response.complete_object(*objects)
         return response
 

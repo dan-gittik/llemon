@@ -1,13 +1,14 @@
+from __future__ import annotations
 from functools import cached_property
 from typing import Any
 
 from sqlalchemy import MetaData, create_engine, text
 from sqlalchemy.schema import CreateTable
 
-from llemon.objects.tool import Toolbox
+import llemon
 
 
-class Database(Toolbox):
+class Database(llemon.Toolbox):
 
     def __init__(self, url: str, readonly: bool = True) -> None:
         self.engine = create_engine(url)

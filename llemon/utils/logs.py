@@ -1,12 +1,16 @@
+from __future__ import annotations
 import logging
 
 from rich.logging import RichHandler
 
-SYSTEM = "💡 "
-USER = "🧑 "
-ASSISTANT = "🤖 "
-FILE = "📎  "
-TOOL = "🛠️  "
+
+class Emoji:
+    SYSTEM = "💡 "
+    USER = "🧑 "
+    ASSISTANT = "🤖 "
+    FILE = "📎  "
+    TOOL = "🛠️  "
+    EMBED = "🧩 "
 
 
 def enable_logs(level: int = logging.DEBUG) -> None:

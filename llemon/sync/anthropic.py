@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Iterator, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, Iterator, ClassVar, Literal, cast
 
 import anthropic
 from anthropic.types import (
@@ -26,30 +26,36 @@ from anthropic.types import (
 )
 from pydantic import BaseModel
 
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model_property import LLMModelProperty
-from llemon.sync.file import File
-from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.sync.tool import Call, Tool
+import llemon.sync as llemon
 from llemon.sync.types import NS, ToolCalls, ToolStream
-from llemon.utils import ASSISTANT, SYSTEM, USER, parallelize
+from llemon.utils import Emoji, parallelize
+
+if TYPE_CHECKING:
+    from llemon.sync import (
+        Call,
+        File,
+        GenerateObjectRequest,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamRequest,
+        GenerateStreamResponse,
+    )
 
 log = logging.getLogger(__name__)
 
 
-class Anthropic(LLM):
+class Anthropic(llemon.LLMProvider):
 
     default_max_tokens: ClassVar[int] = 4096
 
-    opus41 = LLMModelProperty("claude-opus-4-1")
-    opus4 = LLMModelProperty("claude-opus-4-0")
-    sonnet4 = LLMModelProperty("claude-sonnet-4-0")
-    sonnet37 = LLMModelProperty("claude-3-7-sonnet-latest")
-    sonnet35 = LLMModelProperty("claude-3-5-sonnet-latest")
-    haiku35 = LLMModelProperty("claude-3-5-haiku-latest")
-    haiku3 = LLMModelProperty("claude-3-haiku-20240307")
+    opus41 = llemon.LLMProperty("claude-opus-4-1")
+    opus4 = llemon.LLMProperty("claude-opus-4-0")
+    sonnet4 = llemon.LLMProperty("claude-sonnet-4-0")
+    sonnet37 = llemon.LLMProperty("claude-3-7-sonnet-latest")
+    sonnet35 = llemon.LLMProperty("claude-3-5-sonnet-latest")
+    haiku35 = llemon.LLMProperty("claude-3-5-haiku-latest")
+    haiku3 = llemon.LLMProperty("claude-3-haiku-20240307")
 
     def __init__(self, api_key: str) -> None:
         self.client = anthropic.Anthropic(api_key=api_key)
@@ -57,7 +63,7 @@ class Anthropic(LLM):
     def count_tokens(self, request: GenerateRequest) -> int:
         messages = self._messages(request)
         response = self.client.messages.count_tokens(
-            model=request.model.name,
+            model=request.llm.model,
             messages=messages,
         )
         return response.input_tokens
@@ -74,7 +80,7 @@ class Anthropic(LLM):
     def _messages(self, request: GenerateRequest) -> list[MessageParam]:
         messages: list[MessageParam] = []
         if request.instructions:
-            log.debug(SYSTEM + "%s", request.render_instructions())
+            log.debug(Emoji.SYSTEM + "%s", request.render_instructions())
         if request.history:
             self._log_history(request.history)
             for request_, response_ in request.history:
@@ -85,7 +91,7 @@ class Anthropic(LLM):
                     messages.append(self._tool_call(response_.calls))
                     messages.append(self._tool_results(response_.calls))
                 messages.append(self._assistant(response_.text))
-        log.debug(USER + "%s", request.user_input)
+        log.debug(Emoji.USER + "%s", request.user_input)
         messages.append(self._user(request.user_input, request.files))
         return messages
 
@@ -181,9 +187,9 @@ class Anthropic(LLM):
         try:
             instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.create(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
-                max_tokens=request.max_tokens or request.model.config.max_output_tokens or self.default_max_tokens,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
                 system=instructions,
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
@@ -210,7 +216,7 @@ class Anthropic(LLM):
         text = "".join(texts)
         if not text:
             raise request.error(f"{request} response has no text")
-        log.debug(ASSISTANT + "%s", text)
+        log.debug(Emoji.ASSISTANT + "%s", text)
         response.complete_text(text)
         return response
 
@@ -225,9 +231,9 @@ class Anthropic(LLM):
         try:
             instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.stream(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
-                max_tokens=request.max_tokens or request.model.config.max_output_tokens or self.default_max_tokens,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
                 system=instructions,
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
@@ -271,7 +277,7 @@ class Anthropic(LLM):
                     yield delta
             else:
                 response.complete_stream()
-                log.debug(ASSISTANT + "%s", response.text)
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
 
         response.stream = stream()
         return response
@@ -284,7 +290,7 @@ class Anthropic(LLM):
     ) -> GenerateObjectResponse[T]:
         if messages is None:
             messages = self._messages(request)
-        tool = Tool(
+        tool = llemon.Tool(
             name="structured_output",
             description="Use this tool to output a structured object",
             parameters=request.schema.model_json_schema(),
@@ -298,9 +304,9 @@ class Anthropic(LLM):
         try:
             instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.create(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
-                max_tokens=request.max_tokens or request.model.config.max_output_tokens or self.default_max_tokens,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
                 system=instructions,
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
@@ -327,7 +333,7 @@ class Anthropic(LLM):
             return self._generate_object(request, response, messages=messages)
         if not object:
             raise request.error(f"{request} response has no object")
-        log.debug(ASSISTANT + "%s", object)
+        log.debug(Emoji.ASSISTANT + "%s", object)
         response.complete_object(request.schema.model_validate(object))
         return response
 

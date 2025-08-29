@@ -1,59 +1,109 @@
-from . import types
-from .conversation import Conversation
-from .genai.llm import LLM
-from .genai.llm_model import LLMModel
-from .genai.llm_model_config import LLM_MODEL_CONFIGS, LLMModelConfig
-from .genai.llm_model_property import LLMModelProperty
-from .genai.providers.anthropic import Anthropic
-from .genai.providers.deepinfra import DeepInfra
-from .genai.providers.gemini import Gemini
-from .genai.providers.ollama import Ollama
-from .genai.providers.openai import OpenAI
-from .genai.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
-from .objects.classify import ClassifyRequest, ClassifyResponse
-from .objects.generate import GenerateRequest, GenerateResponse
-from .objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from .objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from .objects.rendering import Rendering
-from .objects.tool import Tool, Toolbox
-from .serialization import dump, load, serialization
-from .tools.database import Database
-from .tools.directory import Directory
-from .types import Error, Warning
-from .utils import enable_logs
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from .genai.configs import LLM_CONFIGS
+    from .genai.llm.llm import LLM
+    from .genai.llm.llm_config import LLMConfig
+    from .genai.llm.llm_property import LLMProperty
+    from .genai.llm.llm_provider import LLMProvider
+    from .genai.llm.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
+    from .genai.embedder.embedder import Embedder
+    from .genai.embedder.embedder_property import EmbedderProperty
+    from .genai.embedder.embedder_provider import EmbedderProvider
+    from .genai.provider import Provider
+    from .genai.providers.anthropic import Anthropic
+    from .genai.providers.deepinfra import DeepInfra
+    from .genai.providers.gemini import Gemini
+    from .genai.providers.ollama import Ollama
+    from .genai.providers.openai import OpenAI
+    from .objects.conversation import Conversation
+    from .objects.file import File
+    from .objects.protocol.classify import ClassifyRequest, ClassifyResponse
+    from .objects.protocol.embed import EmbedRequest, EmbedResponse
+    from .objects.protocol.generate import GenerateRequest, GenerateResponse
+    from .objects.protocol.generate_object import GenerateObjectRequest, GenerateObjectResponse
+    from .objects.protocol.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+    from .objects.protocol.request import Request, Response
+    from .objects.rendering import Rendering
+    from .objects.serialization import dump, load, serialization
+    from .objects.tool import Call, Tool, Toolbox
+    from .tools.database import Database
+    from .tools.directory import Directory
+    from .types import Error, Warning
+    from .utils import enable_logs
+
+
+class __Importer:
+
+    def __init__(self) -> None:
+        self.sources: dict[str, str] = {}
+        self.objects: dict[str, Any] = {}
+        self.re = __import__("re")
+        self.importlib = __import__("importlib")
+
+    def __call__(self, name: str) -> Any:
+        if not self.sources:
+            self.load_sources()
+        if name not in self.objects:
+            if name not in self.sources:
+                raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+            module = self.importlib.import_module(self.sources[name], __package__)
+            self.objects[name] = getattr(module, name)
+        return self.objects[name]
+
+    def load_sources(self) -> None:
+        for source, names in self.re.findall(r"from (.*?) import (.*)", open(__file__).read()):
+            if not source.startswith("."):
+                continue
+            for name in names.split(","):
+                name = name.strip()
+                self.sources[name] = source
+
+
+__getattr__ = __Importer()
+
 
 __all__ = [
+    "LLM_CONFIGS",
+    "Provider",
     "LLM",
-    "LLMToken",
+    "LLMConfig",
+    "LLMProperty",
+    "LLMProvider",
     "LLMTokenizer",
-    "LLMModel",
-    "LLMModelConfig",
-    "LLMModelProperty",
-    "LLM_MODEL_CONFIGS",
+    "LLMToken",
+    "Embedder",
+    "EmbedderProperty",
+    "EmbedderProvider",
     "OpenAI",
     "Anthropic",
     "Gemini",
     "DeepInfra",
     "Ollama",
     "Conversation",
-    "ClassifyRequest",
-    "ClassifyResponse",
+    "Request",
+    "Response",
     "GenerateRequest",
     "GenerateResponse",
     "GenerateObjectRequest",
     "GenerateObjectResponse",
     "GenerateStreamRequest",
     "GenerateStreamResponse",
+    "ClassifyRequest",
+    "ClassifyResponse",
+    "EmbedRequest",
+    "EmbedResponse",
+    "File",
+    "Call",
     "Tool",
     "Toolbox",
-    "Database",
-    "Directory",
-    "enable_logs",
     "Rendering",
     "dump",
     "load",
     "serialization",
-    "types",
+    "Directory",
+    "Database",
     "Error",
     "Warning",
+    "enable_logs",
 ]

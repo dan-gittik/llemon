@@ -1,22 +1,21 @@
 from __future__ import annotations
-
 import logging
 import warnings
 from decimal import Decimal
 from functools import cached_property
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
-from llemon.objects.file import File
-from llemon.objects.rendering import Rendering
-from llemon.objects.request import Request, Response
-from llemon.objects.tool import Call, Tool, resolve_tools
+import llemon
 from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument, Warning
-from llemon.utils import ASSISTANT, FILE, TOOL, USER, concat, trim
+from llemon.utils import Emoji, concat, trim
+
+if TYPE_CHECKING:
+    from llemon import LLM, Call, Tool
 
 log = logging.getLogger(__name__)
 
 
-class GenerateRequest(Request):
+class GenerateRequest(llemon.Request):
 
     no_content: ClassVar[str] = "."
     return_incomplete_messages: ClassVar[bool] = False
@@ -24,7 +23,7 @@ class GenerateRequest(Request):
     def __init__(
         self,
         *,
-        model: LLMModel,
+        llm: LLM,
         history: History | None = None,
         instructions: str | None = None,
         user_input: str | None = None,
@@ -53,12 +52,12 @@ class GenerateRequest(Request):
             user_input = trim(user_input)
         if context is None:
             context = {}
-        self.model = model
+        self.llm = llm
         self.instructions = instructions
         self.context = context
-        self.rendering = Rendering.resolve(render)
-        self.files = File.resolve(files)
-        self.tools = resolve_tools(tools)
+        self.rendering = llemon.Rendering.resolve(render)
+        self.files = llemon.File.resolve(files)
+        self.tools = llemon.Tool.resolve(tools)
         self.use_tool = use_tool
         self.variants = variants
         self.temperature = temperature
@@ -76,7 +75,7 @@ class GenerateRequest(Request):
         self._return_incomplete_message = return_incomplete_message
 
     def __str__(self) -> str:
-        return f"{self.model}({self.user_input!r})"
+        return f"{self.llm}.generate({self.user_input!r})"
 
     @cached_property
     def user_input(self) -> str:
@@ -90,7 +89,7 @@ class GenerateRequest(Request):
     def tools_dict(self) -> dict[str, Tool]:
         tools_dict: dict[str, Tool] = {}
         for tool in self.tools:
-            if isinstance(tool, Tool):
+            if isinstance(tool, llemon.Tool):
                 tools_dict[tool.compatible_name] = tool
             else:
                 for tool in tool.tools:
@@ -104,20 +103,20 @@ class GenerateRequest(Request):
         return self._return_incomplete_message
 
     def check_supported(self) -> None:
-        for parameter in self.model.config.unsupported_parameters or []:
+        for parameter in self.llm.config.unsupported_parameters or []:
             if getattr(self, parameter, None) is not None:
-                warnings.warn(f"{self.model} doesn't support {parameter}", Warning)
+                warnings.warn(f"{self.llm} doesn't support {parameter}", Warning)
                 setattr(self, parameter, None)
-        if self.tools and not self.model.config.supports_tools:
-            warnings.warn(f"{self.model} doesn't support tools", Warning)
+        if self.tools and not self.llm.config.supports_tools:
+            warnings.warn(f"{self.llm} doesn't support tools", Warning)
             self.tools = []
         accepted_files = []
         for file in self.files:
-            if not self.model.config.accepts_files:
-                warnings.warn(f"{self.model} doesn't support files", Warning)
+            if not self.llm.config.accepts_files:
+                warnings.warn(f"{self.llm} doesn't support files", Warning)
                 break
-            if file.mimetype not in self.model.config.accepts_files:
-                warnings.warn(f"{self.model} doesn't support {file.mimetype} files ({file})", Warning)
+            if file.mimetype not in self.llm.config.accepts_files:
+                warnings.warn(f"{self.llm} doesn't support {file.mimetype} files ({file})", Warning)
             else:
                 accepted_files.append(file)
         self.files = accepted_files
@@ -148,15 +147,15 @@ class GenerateRequest(Request):
 
     def format(self, emoji: bool = True) -> str:
         output: list[str] = []
-        user = USER if emoji else "User: "
+        user = Emoji.USER if emoji else "User: "
         output.append(f"{user}{self.user_input}")
-        file_ = FILE if emoji else "File: "
+        file_ = Emoji.FILE if emoji else "File: "
         for file in self.files:
             output.append(f"{file_}{file.name}")
         return "\n".join(output)
 
 
-class GenerateResponse(Response):
+class GenerateResponse(llemon.Response):
 
     request: GenerateRequest
 
@@ -171,7 +170,7 @@ class GenerateResponse(Response):
         self._selected = 0
 
     def __str__(self) -> str:
-        return f"{self.request.model}: {self.text}"
+        return f"{self.request.llm}: {self.text}"
 
     @cached_property
     def texts(self) -> list[str]:
@@ -186,10 +185,10 @@ class GenerateResponse(Response):
     @cached_property
     def cost(self) -> Decimal:
         return (
-            Decimal(self.input_tokens) * Decimal(self.request.model.config.cost_per_1m_input_tokens or 0)
-            + Decimal(self.cache_tokens) * Decimal(self.request.model.config.cost_per_1m_cache_tokens or 0)
-            + Decimal(self.output_tokens) * Decimal(self.request.model.config.cost_per_1m_output_tokens or 0)
-            + Decimal(self.reasoning_tokens) * Decimal(self.request.model.config.cost_per_1m_output_tokens or 0)
+            Decimal(self.input_tokens) * Decimal(self.request.llm.config.cost_per_1m_input_tokens or 0)
+            + Decimal(self.cache_tokens) * Decimal(self.request.llm.config.cost_per_1m_cache_tokens or 0)
+            + Decimal(self.output_tokens) * Decimal(self.request.llm.config.cost_per_1m_output_tokens or 0)
+            + Decimal(self.reasoning_tokens) * Decimal(self.request.llm.config.cost_per_1m_output_tokens or 0)
         ) / 1_000_000
 
     @cached_property
@@ -208,13 +207,10 @@ class GenerateResponse(Response):
 
     def format(self, emoji: bool = True) -> str:
         output: list[str] = []
-        tool = TOOL if emoji else "Tool: "
+        tool = Emoji.TOOL if emoji else "Tool: "
         for call in self.calls:
             result = call.result["error"] if "error" in call.result else call.result["return_value"]
             output.append(f"{tool}{call.signature} -> {result}")
-        assistant = ASSISTANT if emoji else "Assistant: "
+        assistant = Emoji.ASSISTANT if emoji else "Assistant: "
         output.append(f"{assistant}{self.text}")
         return "\n".join(output)
-
-
-from llemon.genai.llm_model import LLMModel

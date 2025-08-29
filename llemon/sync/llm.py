@@ -1,147 +1,263 @@
 from __future__ import annotations
 
-import datetime as dt
-import inspect
-import logging
-from typing import Any, ClassVar
+from contextlib import contextmanager
+from functools import cached_property
+from typing import TYPE_CHECKING, Iterator, cast
 
-from dotenv import dotenv_values
 from pydantic import BaseModel
 
-from llemon.sync.types import NS, Error, History
-from llemon.utils import Superclass
+import llemon.sync as llemon
+from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
+from llemon.utils import schema_to_model
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from llemon.sync import (
+        ClassifyResponse,
+        Conversation,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamResponse,
+        LLMConfig,
+        LLMProvider,
+        LLMTokenizer,
+    )
 
 
-class LLM(Superclass):
+class LLM:
 
-    configurations: ClassVar[NS] = {}
-    instance: ClassVar[LLM | None] = None
-    models: ClassVar[dict[str, LLMModel]] = {}
-
-    def __init_subclass__(cls) -> None:
-        super().__init_subclass__()
-        cls.instance = None
-        cls.models = {}
+    def __init__(self, provider: LLMProvider, model: str, config: LLMConfig) -> None:
+        self.provider = provider
+        self.model = model
+        self.config = config
 
     def __str__(self) -> str:
-        return f"{self.__class__.__name__}"
+        return f"{self.provider}:{self.model}"
 
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    @classmethod
-    def configure(cls, config_dict: NS | None = None, /, **config_kwargs: Any) -> None:
-        config = dotenv_values()
-        if config_dict:
-            config.update(config_dict)
-        if config_kwargs:
-            config.update(config_kwargs)
-        cls.configurations.update({key.lower(): value for key, value in config.items()})
+    @cached_property
+    def tokenizer(self) -> LLMTokenizer:
+        if self.config.tokenizer is None:
+            tokenizer_class = llemon.LLMTokenizer
+        else:
+            tokenizer_class = llemon.LLMTokenizer.get_subclass(self.config.tokenizer)
+        return tokenizer_class(self)
 
-    @classmethod
-    def create(cls) -> LLM:
-        if cls.__init__ is object.__init__:
-            return cls()
-        if not cls.configurations:
-            cls.configure()
-        signature = inspect.signature(cls.__init__)
-        parameters = list(signature.parameters.values())[1:]  # skip self
-        kwargs = {}
-        prefix = cls.__name__.lower()
-        for parameter in parameters:
-            name = f"{prefix}_{parameter.name}"
-            if name in cls.configurations:
-                value = cls.configurations[name]
-            elif parameter.default is not parameter.empty:
-                value = parameter.default
-            else:
-                raise Error(f"{cls.__name__} missing configuration {parameter.name!r}")
-            kwargs[parameter.name] = value
-        return cls(**kwargs)
+    def conversation(
+        self,
+        instructions: str | None = None,
+        context: NS | None = None,
+        tools: ToolsArgument = None,
+        history: History | None = None,
+        render: RenderArgument = True,
+    ) -> Conversation:
+        return llemon.Conversation(
+            llm=self,
+            instructions=instructions,
+            context=context,
+            tools=tools,
+            history=history,
+            render=render,
+        )
 
-    @classmethod
-    def model(
-        cls,
-        name: str,
+    def generate(
+        self,
+        message1: str | None = None,
+        message2: str | None = None,
+        /,
         *,
-        tokenizer: str | None = None,
-        knowledge_cutoff: dt.date | None = None,
-        context_window: int | None = None,
-        max_output_tokens: int | None = None,
-        unsupported_parameters: list[str] | None = None,
-        supports_streaming: bool | None = None,
-        supports_structured_output: bool | None = None,
-        supports_json: bool | None = None,
-        supports_tools: bool | None = None,
-        supports_logit_biasing: bool | None = None,
-        accepts_files: list[str] | None = None,
-        cost_per_1m_input_tokens: float | None = None,
-        cost_per_1m_cache_tokens: float | None = None,
-        cost_per_1m_output_tokens: float | None = None,
-    ) -> LLMModel:
-        if not cls.instance:
-            log.debug("creating instance of %s", cls.__name__)
-            cls.instance = cls.create()
-        self = cls.instance
-        if name not in self.models:
-            log.debug("creating model %s", name)
-            config = LLMModelConfig(
-                name=name,
-                tokenizer=tokenizer,
-                knowledge_cutoff=knowledge_cutoff,
-                context_window=context_window,
-                max_output_tokens=max_output_tokens,
-                unsupported_parameters=unsupported_parameters,
-                supports_streaming=supports_streaming,
-                supports_structured_output=supports_structured_output,
-                supports_json=supports_json,
-                supports_tools=supports_tools,
-                supports_logit_biasing=supports_logit_biasing,
-                accepts_files=accepts_files,
-                cost_per_1m_input_tokens=cost_per_1m_input_tokens,
-                cost_per_1m_cache_tokens=cost_per_1m_cache_tokens,
-                cost_per_1m_output_tokens=cost_per_1m_output_tokens,
-            )
-            config.load_defaults()
-            self.models[name] = LLMModel(self, name, config)
-        return self.models[name]
+        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+    ) -> GenerateResponse:
+        instructions, user_input = self._resolve_messages(message1, message2)
+        request = llemon.GenerateRequest(
+            llm=self,
+            user_input=user_input,
+            instructions=instructions,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+            variants=variants,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            top_k=top_k,
+            stop=stop,
+            prediction=prediction,
+            return_incomplete_message=return_incomplete_message,
+        )
+        with self._standalone(request):
+            return self.provider.generate(request)
 
-    def count_tokens(self, request: GenerateRequest) -> int:
-        raise NotImplementedError()
+    def generate_stream(
+        self,
+        message1: str | None = None,
+        message2: str | None = None,
+        /,
+        *,
+        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+    ) -> GenerateStreamResponse:
+        instructions, user_input = self._resolve_messages(message1, message2)
+        request = llemon.GenerateStreamRequest(
+            llm=self,
+            user_input=user_input,
+            instructions=instructions,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            top_k=top_k,
+            stop=stop,
+            prediction=prediction,
+            return_incomplete_message=return_incomplete_message,
+        )
+        with self._standalone(request):
+            return self.provider.generate_stream(request)
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
-        raise NotImplementedError()
+    def generate_object[T: BaseModel](
+        self,
+        schema: NS | type[T],
+        message1: str | None = None,
+        message2: str | None = None,
+        /,
+        *,
+        history: History | None = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        variants: int | None = None,
+        temperature: float | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        top_k: int | None = None,
+        prediction: str | NS | T | None = None,
+    ) -> GenerateObjectResponse[T]:
+        if isinstance(schema, dict):
+            model_class = cast(type[T], schema_to_model(schema))
+        else:
+            model_class = schema
+        instructions, user_input = self._resolve_messages(message1, message2)
+        request = llemon.GenerateObjectRequest(
+            schema=model_class,
+            llm=self,
+            user_input=user_input,
+            instructions=instructions,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+            variants=variants,
+            temperature=temperature,
+            seed=seed,
+            frequency_penalty=frequency_penalty,
+            presence_penalty=presence_penalty,
+            repetition_penalty=repetition_penalty,
+            top_p=top_p,
+            top_k=top_k,
+            prediction=prediction,
+        )
+        with self._standalone(request):
+            return self.provider.generate_object(request)
 
-    def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        raise NotImplementedError()
+    def classify(
+        self,
+        question: str,
+        answers: list[str] | type[bool],
+        user_input: str,
+        *,
+        reasoning: bool = False,
+        null_answer: bool = True,
+        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+    ) -> ClassifyResponse:
+        request = llemon.ClassifyRequest(
+            llm=self,
+            question=question,
+            answers=answers,
+            user_input=user_input,
+            reasoning=reasoning,
+            null_answer=null_answer,
+            history=history,
+            context=context,
+            render=render,
+            files=files,
+            tools=tools,
+            use_tool=use_tool,
+        )
+        with self._standalone(request):
+            return self.provider.classify(request)
 
-    def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        raise NotImplementedError()
+    def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
+        if message2 is None:
+            return None, message1
+        return message1, message2
 
-    def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        raise NotImplementedError()
-
-    def prepare(self, request: GenerateRequest, state: NS) -> None:
-        request.check_supported()
-
-    def cleanup(self, state: NS) -> None:
-        pass
-
-    def _log_history(self, history: History) -> None:
-        extra = {"markup": True, "highlighter": None}
-        log.debug("[bold underline]history[/]", extra=extra)
-        for request, response in history:
-            timestamp = f"{response.started:%H:%M:%S}-{response.ended:%H:%M:%S} ({response.duration:.2f}s)"
-            log.debug(f"[bold yellow]{request.__class__.__name__}[/] [{timestamp}]", extra=extra)
-            log.debug(request.format(), extra=extra)
-            log.debug(response.format(), extra=extra)
-
-
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.llm_model_config import LLMModelConfig
-from llemon.sync.classify import ClassifyRequest, ClassifyResponse
-from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+    @contextmanager
+    def _standalone(self, request: GenerateRequest) -> Iterator[None]:
+        state: NS = {}
+        self.provider.prepare_generation(request, state)
+        try:
+            yield
+        finally:
+            self.provider.cleanup_generation(state)

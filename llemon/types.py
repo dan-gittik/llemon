@@ -1,14 +1,10 @@
 from __future__ import annotations
-
 import builtins
 import pathlib
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
 if TYPE_CHECKING:
-    from llemon.objects.file import File
-    from llemon.objects.rendering import Rendering
-    from llemon.objects.request import Request, Response
-    from llemon.objects.tool import Call, Tool, Toolbox
+    from llemon import Call, File, Rendering, Request, Response, Tool, Toolbox
 
 type NS = dict[str, Any]
 type FilesArgument = Sequence[str | pathlib.Path | tuple[str, bytes] | File] | None

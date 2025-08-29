@@ -132,7 +132,7 @@ can do so like this:
 
 ```pycon
 >>> from llemon import Ollama
->>> mistral = Ollama.model("mistral")
+>>> mistral = Ollama.llm("mistral")
 >>> mistral
 <Ollama/mistral>
 ```
@@ -166,7 +166,7 @@ guarantee it will adhere to the schema. For predefined models, these
 configurations are attached automatically, even if we use strings:
 
 ```pycon
->>> gpt5_nano = OpenAI.model('gpt5_nano')
+>>> gpt5_nano = OpenAI.llm('gpt5_nano')
 >>> gpt5_nano.config.supports_structured_output
 True
 ```
@@ -182,7 +182,7 @@ So some features will not work as expected, unless we provide the configuration
 (or at least, those parts of it that matter for our scenario) as well:
 
 ```pycon
->>> mistral = OpenAI.model("o1", supports_structured_output=True)
+>>> mistral = Ollama.llm("mistral", supports_structured_output=True)
 ```
 
 ### Generation

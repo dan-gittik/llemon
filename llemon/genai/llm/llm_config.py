@@ -1,13 +1,15 @@
+from __future__ import annotations
 import datetime as dt
-from importlib import resources
 from typing import Any
 
-import yaml
 from pydantic import BaseModel
 
+import llemon
+from llemon.utils import filtered_dict
 
-class LLMModelConfig(BaseModel):
-    name: str
+
+class LLMConfig(BaseModel):
+    model: str
     tokenizer: str | None = None
     knowledge_cutoff: dt.date | None = None
     context_window: int | None = None
@@ -23,23 +25,14 @@ class LLMModelConfig(BaseModel):
     cost_per_1m_cache_tokens: float | None = None
     cost_per_1m_output_tokens: float | None = None
 
+    def __init__(self, **kwargs: Any) -> None:
+        super().__init__(**filtered_dict(**kwargs))
+        if self.model in llemon.LLM_CONFIGS:
+            set_fields = self.model_dump(exclude_unset=True)
+            for key, value in llemon.LLM_CONFIGS[self.model].items():
+                if key not in set_fields:
+                    setattr(self, key, value)
+
     @property
     def supports_objects(self) -> bool:
         return bool(self.supports_structured_output or self.supports_json)
-
-    def load_defaults(self) -> None:
-        if self.name not in LLM_MODEL_CONFIGS:
-            return
-        set_fields = self.model_dump(exclude_none=True)
-        for key, value in LLM_MODEL_CONFIGS[self.name].items():
-            if key not in set_fields:
-                setattr(self, key, value)
-
-
-LLM_MODEL_CONFIGS: dict[str, dict[str, Any]] = {}
-
-CONFIGS_PATH = resources.files("llemon.genai") / "configs.yaml"
-for name, config in yaml.safe_load(CONFIGS_PATH.read_text()).items():
-    if name.startswith("_"):
-        continue
-    LLM_MODEL_CONFIGS[name] = dict(name=name, **config)

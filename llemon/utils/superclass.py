@@ -1,23 +1,19 @@
-from typing import ClassVar, Self
+from __future__ import annotations
+from typing import Self
 
-from llemon.utils.concat import concat
+from .concat import concat
 
 
 class Superclass:
 
-    classes: ClassVar[dict[str, type[Self]]]
-
-    def __init_subclass__(cls) -> None:
-        cls.classes = {}
-        for base in cls.__mro__[1:]:
-            classes = getattr(base, "classes", None)
-            if classes is not None:
-                classes[cls.__name__] = cls
-
     @classmethod
     def get_subclass(cls, name: str) -> type[Self]:
-        if name not in cls.classes:
-            raise ValueError(
-                f"{cls.__name__} has no subclass {name!r} (available subclasses are {concat(cls.classes)})"
-            )
-        return cls.classes[name]
+        subclasses: dict[str, type[Self]] = {}
+        consider = cls.__subclasses__()
+        while consider:
+            subclass = consider.pop()
+            subclasses[subclass.__name__] = subclass
+            consider.extend(subclass.__subclasses__())
+        if name not in subclasses:
+            raise ValueError(f"{cls.__name__} has no subclass {name!r} (available subclasses are {concat(subclasses)})")
+        return subclasses[name]

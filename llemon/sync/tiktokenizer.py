@@ -1,27 +1,25 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import ClassVar, Sequence
+from typing import TYPE_CHECKING, Sequence
 
 import tiktoken
 
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.count_tokens import count_tokens
-from llemon.sync.llm_tokenizer import LLMToken, LLMTokenizer
-from llemon.sync.generate import GenerateRequest
+import llemon.sync as llemon
+
+if TYPE_CHECKING:
+    from llemon.sync import LLM
 
 ENCODINGS: dict[str, tiktoken.Encoding] = {}
 
 
-class TikTokenizer(LLMTokenizer):
+class TiktokenTokenizer(llemon.LLMTokenizer):
 
-    label: ClassVar[str] = "tiktoken"
-
-    def __init__(self, model: LLMModel) -> None:
-        super().__init__(model)
-        if model.name not in ENCODINGS:
-            ENCODINGS[model.name] = tiktoken.encoding_for_model(model.name)
-        self.encoding = ENCODINGS[model.name]
+    def __init__(self, llm: LLM) -> None:
+        super().__init__(llm)
+        if llm.model not in ENCODINGS:
+            ENCODINGS[llm.model] = tiktoken.encoding_for_model(llm.model)
+        self.encoding = ENCODINGS[llm.model]
 
     def encode(self, *texts: str) -> list[int]:
         ids: list[int] = []
@@ -32,24 +30,21 @@ class TikTokenizer(LLMTokenizer):
     def decode(self, *ids: int) -> str:
         return self.encoding.decode(ids)
 
-    def parse(self, text: str) -> Sequence[OpenAIToken]:
-        tokens: list[OpenAIToken] = []
-        token: OpenAIToken | None = None
+    def parse(self, text: str) -> Sequence[TikToken]:
+        tokens: list[TikToken] = []
+        token: TikToken | None = None
         for token_id in self.encoding.encode(text):
-            token = OpenAIToken(token_id, self.encoding, token)
+            token = TikToken(token_id, self.encoding, token)
             tokens.append(token)
         return tokens
 
-    def _count(self, request: GenerateRequest) -> int:
-        return count_tokens(request, self.__count)
-
-    def __count(self, text: str) -> int:
+    def _count(self, text: str) -> int:
         return len(self.encoding.encode(text))
 
 
-class OpenAIToken(LLMToken):
+class TikToken(llemon.LLMToken):
 
-    def __init__(self, id: int, encoding: tiktoken.Encoding, prev: OpenAIToken | None) -> None:
+    def __init__(self, id: int, encoding: tiktoken.Encoding, prev: TikToken | None) -> None:
         super().__init__(id)
         self._encoding = encoding
         self._prev = prev

@@ -1,44 +1,28 @@
 from __future__ import annotations
 
-from typing import ClassVar, Sequence
+import json
+from typing import TYPE_CHECKING, Sequence
 
 from pydantic import BaseModel
 
-from llemon.sync.llm_model import LLMModel
-from llemon.sync.generate import GenerateRequest
-from llemon.sync.generate_object import GenerateObjectRequest
+import llemon.sync as llemon
 from llemon.sync.types import NS, Error, FilesArgument, RenderArgument, ToolsArgument
-from llemon.utils import concat, schema_to_model
+from llemon.utils import Superclass, schema_to_model
+
+if TYPE_CHECKING:
+    from llemon.sync import LLM, GenerateRequest
 
 
-class LLMTokenizer:
+class LLMTokenizer(Superclass):
 
-    label: ClassVar[str] = ""
-    classes: ClassVar[dict[str, type[LLMTokenizer]]] = {}
-
-    def __init__(self, model: LLMModel) -> None:
-        self.model = model
+    def __init__(self, llm: LLM) -> None:
+        self.llm = llm
 
     def __str__(self) -> str:
-        return f"{self.model} tokenizer"
+        return f"{self.llm} tokenizer"
 
     def __repr__(self) -> str:
         return f"<{self}>"
-
-    def __init_subclass__(cls) -> None:
-        if not cls.label:
-            raise TypeError(f"{cls.__name__} must define a label")
-        if cls.label in cls.classes:
-            raise TypeError(f"{cls.__name__} label {cls.label!r} is already used by {cls.classes[cls.label].__name__}")
-        cls.classes[cls.label] = cls
-
-    @classmethod
-    def get(cls, label: str | None = None) -> type[LLMTokenizer]:
-        if label is None:
-            return LLMTokenizer
-        if label not in cls.classes:
-            raise ValueError(f"no tokenizer {label!r} (available tokenizers are {concat(cls.classes)})")
-        return cls.classes[label]
 
     def count(
         self,
@@ -46,16 +30,15 @@ class LLMTokenizer:
         message2: str | None = None,
         /,
         *,
-        instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument | None = None,
         files: FilesArgument | None = None,
         tools: ToolsArgument | None = None,
         schema: type[BaseModel] | NS | None = None,
     ) -> int:
-        instructions, user_input = self.model._resolve_messages(message1, message2)
+        instructions, user_input = self.llm._resolve_messages(message1, message2)
         args: NS = dict(
-            model=self.model,
+            llm=self.llm,
             user_input=user_input,
             instructions=instructions,
             context=context,
@@ -63,12 +46,16 @@ class LLMTokenizer:
             files=files,
             tools=tools,
         )
+        request: GenerateRequest
         if schema is not None:
             if isinstance(schema, dict):
                 schema = schema_to_model(schema)
-            return self._count(GenerateObjectRequest[BaseModel](schema=schema, **args))
+            request = llemon.GenerateObjectRequest[BaseModel](schema=schema, **args)
         else:
-            return self._count(GenerateRequest(**args))
+            request = llemon.GenerateRequest(**args)
+        if self._count is not LLMTokenizer._count:
+            return self._count_tokens(request)
+        return self.llm.provider.count_tokens(request)
 
     def encode(self, *texts: str) -> list[int]:
         raise self._unsupported()
@@ -79,11 +66,43 @@ class LLMTokenizer:
     def parse(self, text: str) -> Sequence[LLMToken]:
         raise self._unsupported()
 
-    def _count(self, request: GenerateRequest) -> int:
-        return self.model.llm.count_tokens(request)
+    def _count_tokens(self, request: GenerateRequest) -> int:
+        total = 0
+        if request.instructions:
+            if isinstance(request, llemon.GenerateObjectRequest) and not request.llm.config.supports_structured_output:
+                request.append_json_instruction()
+            total += self._count(request.render_instructions()) + 3
+        for request_, response_ in request.history:
+            if isinstance(request_, llemon.GenerateRequest):
+                total += self._count(request_.user_input) + 3
+            if isinstance(response_, llemon.GenerateResponse):
+                total += self._count(response_.text) + 3
+        if request.user_input:
+            total += self._count(request.user_input) + 3
+        tools: list[dict] = []
+        for name, tool in request.tools_dict.items():
+            tools.append(
+                dict(
+                    type="function",
+                    function=dict(
+                        name=name,
+                        description=tool.description,
+                        parameters=tool.parameters,
+                    ),
+                )
+            )
+        if tools:
+            total += self._count(json.dumps(tools, separators=(",", ":"))) + 3
+        if isinstance(request, llemon.GenerateObjectRequest):
+            schema = request.schema.model_json_schema()
+            total += self._count(json.dumps(schema, separators=(",", ":"))) + 3
+        return total + 3
+
+    def _count(self, text: str) -> int:
+        raise NotImplementedError()
 
     def _unsupported(self) -> Error:
-        return Error(f"{self.model} tokenizer does not support this operation")
+        return Error(f"{self.llm} tokenizer does not support this operation")
 
 
 class LLMToken:

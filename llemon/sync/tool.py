@@ -10,11 +10,11 @@ from typing import Any, Callable, ClassVar, NoReturn, get_type_hints
 from pydantic import BaseModel, ConfigDict
 
 from llemon.sync.types import NS, Error, ToolsArgument
-from llemon.utils import TOOL, Superclass, to_sync, trim
+from llemon.utils import Emoji, Superclass, to_sync, trim
 
 log = logging.getLogger(__name__)
+
 PARAMETER_SCHEMAS: dict[Callable[..., Any], NS] = {}
-undefined = object()
 
 
 class Tool:
@@ -44,6 +44,18 @@ class Tool:
         return f"<{self}>"
 
     @classmethod
+    def resolve(cls, tools: ToolsArgument) -> list[Tool | Toolbox]:
+        if tools is None:
+            return []
+        resolved: list[Tool | Toolbox] = []
+        for tool in tools:
+            if callable(tool):
+                resolved.append(cls.from_function(tool))
+            else:
+                resolved.append(tool)
+        return resolved
+
+    @classmethod
     def from_function(cls, function: Callable[..., Any]) -> Tool:
         parameters = _parse_parameters(function)
         return cls(
@@ -59,6 +71,8 @@ class Tool:
 
 
 class Call:
+
+    undefined: ClassVar[Any] = object()
 
     def __init__(
         self,
@@ -76,7 +90,7 @@ class Call:
 
     def __str__(self) -> str:
         output = [f"call {self.id!r}: {self.signature}"]
-        if self._return_value is not undefined:
+        if self._return_value is not self.undefined:
             output.append(f" -> {self._return_value}")
         elif self._error is not None:
             output.append(f" -> {self._error!r}")
@@ -98,13 +112,13 @@ class Call:
     def return_value(self) -> Any:
         if self._error:
             raise Error(self._error)
-        if self._return_value is undefined:
+        if self._return_value is self.undefined:
             raise self._incomplete_call()
         return self._return_value
 
     @cached_property
     def error(self) -> str | None:
-        if not self._error and self._return_value is undefined:
+        if not self._error and self._return_value is self.undefined:
             raise self._incomplete_call()
         return self._error
 
@@ -112,7 +126,7 @@ class Call:
     def result(self) -> NS:
         if self._error:
             return {"error": self.error}
-        elif self._return_value is undefined:
+        elif self._return_value is self.undefined:
             raise self._incomplete_call()
         return {"return_value": self.return_value}
 
@@ -132,13 +146,13 @@ class Call:
         return json.dumps(result)
 
     def run(self) -> None:
-        log.debug(TOOL + "%s", self.signature)
+        log.debug(Emoji.TOOL + "%s", self.signature)
         try:
             self._return_value = to_sync(self.tool.function)(**self.arguments)
-            log.debug(TOOL + "%s returned %r", self.signature, self._return_value)
+            log.debug(Emoji.TOOL + "%s returned %r", self.signature, self._return_value)
         except Exception as error:
             self._error = self._format_error(error)
-            log.debug(TOOL + "%s raised %r", self.signature, self._error)
+            log.debug(Emoji.TOOL + "%s raised %r", self.signature, self._error)
 
     def _incomplete_call(self) -> Error:
         return Error(f"{self} didn't run yet")
@@ -196,18 +210,6 @@ class Toolbox(Superclass):
             function = getattr(self, f"{self.render_prefix}{name}")
             renders[name] = function
         return renders
-
-
-def resolve_tools(tools: ToolsArgument) -> list[Tool | Toolbox]:
-    if tools is None:
-        return []
-    resolved: list[Tool | Toolbox] = []
-    for tool in tools:
-        if callable(tool):
-            resolved.append(Tool.from_function(tool))
-        else:
-            resolved.append(tool)
-    return resolved
 
 
 def _parse_parameters(function: Callable[..., Any]) -> NS:

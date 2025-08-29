@@ -1,15 +1,13 @@
 from __future__ import annotations
-
 import openai
 
-from llemon.genai.llm_model_property import LLMModelProperty
-from llemon.genai.providers.openai import OpenAI
+import llemon
 
 
-class DeepInfra(OpenAI):
+class DeepInfra(llemon.OpenAI):
 
-    llama31_70b = LLMModelProperty("meta-llama/Meta-Llama-3.1-70B-Instruct")
-    llama31_8b = LLMModelProperty("meta-llama/Meta-Llama-3.1-8B-Instruct")
+    llama31_70b = llemon.LLMProperty("meta-llama/Meta-Llama-3.1-70B-Instruct")
+    llama31_8b = llemon.LLMProperty("meta-llama/Meta-Llama-3.1-8B-Instruct")
 
     def __init__(self, api_key: str) -> None:
         self.client = openai.AsyncOpenAI(

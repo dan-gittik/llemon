@@ -1,70 +1,42 @@
 from __future__ import annotations
-
 import datetime as dt
-import inspect
 import logging
-from typing import Any, ClassVar
+from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING, ClassVar, cast
 
-from dotenv import dotenv_values
 from pydantic import BaseModel
 
-from llemon.types import NS, Error, History
-from llemon.utils import Superclass
+import llemon
+from llemon.types import NS, History
+
+if TYPE_CHECKING:
+    from llemon import (
+        LLM,
+        ClassifyRequest,
+        ClassifyResponse,
+        GenerateObjectRequest,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamRequest,
+        GenerateStreamResponse,
+    )
 
 log = logging.getLogger(__name__)
 
 
-class LLM(Superclass):
+class LLMProvider(ABC, llemon.Provider):
 
-    configurations: ClassVar[NS] = {}
-    instance: ClassVar[LLM | None] = None
-    models: ClassVar[dict[str, LLMModel]] = {}
+    llms: ClassVar[dict[str, LLM]] = {}
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        cls.instance = None
-        cls.models = {}
-
-    def __str__(self) -> str:
-        return f"{self.__class__.__name__}"
-
-    def __repr__(self) -> str:
-        return f"<{self}>"
+        cls.llms = {}
 
     @classmethod
-    def configure(cls, config_dict: NS | None = None, /, **config_kwargs: Any) -> None:
-        config = dotenv_values()
-        if config_dict:
-            config.update(config_dict)
-        if config_kwargs:
-            config.update(config_kwargs)
-        cls.configurations.update({key.lower(): value for key, value in config.items()})
-
-    @classmethod
-    def create(cls) -> LLM:
-        if cls.__init__ is object.__init__:
-            return cls()
-        if not cls.configurations:
-            cls.configure()
-        signature = inspect.signature(cls.__init__)
-        parameters = list(signature.parameters.values())[1:]  # skip self
-        kwargs = {}
-        prefix = cls.__name__.lower()
-        for parameter in parameters:
-            name = f"{prefix}_{parameter.name}"
-            if name in cls.configurations:
-                value = cls.configurations[name]
-            elif parameter.default is not parameter.empty:
-                value = parameter.default
-            else:
-                raise Error(f"{cls.__name__} missing configuration {parameter.name!r}")
-            kwargs[parameter.name] = value
-        return cls(**kwargs)
-
-    @classmethod
-    def model(
+    def llm(
         cls,
-        name: str,
+        model: str,
         *,
         tokenizer: str | None = None,
         knowledge_cutoff: dt.date | None = None,
@@ -80,15 +52,12 @@ class LLM(Superclass):
         cost_per_1m_input_tokens: float | None = None,
         cost_per_1m_cache_tokens: float | None = None,
         cost_per_1m_output_tokens: float | None = None,
-    ) -> LLMModel:
-        if not cls.instance:
-            log.debug("creating instance of %s", cls.__name__)
-            cls.instance = cls.create()
-        self = cls.instance
-        if name not in self.models:
-            log.debug("creating model %s", name)
-            config = LLMModelConfig(
-                name=name,
+    ) -> LLM:
+        self = cls.get()
+        if model not in self.llms:
+            log.debug("creating model %s", model)
+            config = llemon.LLMConfig(
+                model=model,
                 tokenizer=tokenizer,
                 knowledge_cutoff=knowledge_cutoff,
                 context_window=context_window,
@@ -104,29 +73,52 @@ class LLM(Superclass):
                 cost_per_1m_cache_tokens=cost_per_1m_cache_tokens,
                 cost_per_1m_output_tokens=cost_per_1m_output_tokens,
             )
-            config.load_defaults()
-            self.models[name] = LLMModel(self, name, config)
-        return self.models[name]
+            self.llms[model] = llemon.LLM(self, model, config)
+        return self.llms[model]
 
+    @abstractmethod
     async def count_tokens(self, request: GenerateRequest) -> int:
         raise NotImplementedError()
 
+    @abstractmethod
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
         raise NotImplementedError()
 
+    @abstractmethod
     async def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
         raise NotImplementedError()
 
+    @abstractmethod
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
         raise NotImplementedError()
 
     async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        raise NotImplementedError()
+        response = llemon.ClassifyResponse(request)
+        reasoning: str | None = None
+        if request.llm.config.supports_objects:
+            log.debug("classifying with structured output")
+            generate_object_request = request.to_object_request()
+            generate_object_response = await self.generate_object(generate_object_request)
+            data = generate_object_response.object.model_dump()
+            answer_num = cast(int, data["answer"])
+            reasoning = data.get("reasoning")
+        else:
+            log.debug("classifying with generated text")
+            generate_response = await self.generate(request)
+            if not generate_response.text.isdigit():
+                raise request.error(f"{request} answer was not a number: {generate_response.text}")
+            answer_num = int(generate_response.text)
+        if not 0 <= answer_num < len(request.answers):
+            raise request.error(f"{request} answer number was out of range: {answer_num}")
+        answer = request.answers[answer_num]
+        log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
+        response.complete_answer(answer, reasoning)
+        return response
 
-    async def prepare(self, request: GenerateRequest, state: NS) -> None:
+    async def prepare_generation(self, request: GenerateRequest, state: NS) -> None:
         request.check_supported()
 
-    async def cleanup(self, state: NS) -> None:
+    async def cleanup_generation(self, state: NS) -> None:
         pass
 
     def _log_history(self, history: History) -> None:
@@ -137,11 +129,3 @@ class LLM(Superclass):
             log.debug(f"[bold yellow]{request.__class__.__name__}[/] [{timestamp}]", extra=extra)
             log.debug(request.format(), extra=extra)
             log.debug(response.format(), extra=extra)
-
-
-from llemon.genai.llm_model import LLMModel
-from llemon.genai.llm_model_config import LLMModelConfig
-from llemon.objects.classify import ClassifyRequest, ClassifyResponse
-from llemon.objects.generate import GenerateRequest, GenerateResponse
-from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse

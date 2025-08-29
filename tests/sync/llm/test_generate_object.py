@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 from pydantic import BaseModel, Field
 
-from llemon.sync import GenerateObjectResponse, LLMModel
+from llemon.sync import GenerateObjectResponse, LLM
 
 
 class Person(BaseModel):
@@ -34,17 +34,17 @@ PERSON_SCHEMA = {
 
 
 def requires_structured_output(function: Callable[..., Any]) -> Callable[..., Any]:
-    def wrapper(model: LLMModel, *args: Any, **kwargs: Any) -> Any:
-        if not model.config.supports_json:
-            pytest.skip(f"model {model} doesn't support structured output")
-        return function(model, *args, **kwargs)
+    def wrapper(llm: LLM, *args: Any, **kwargs: Any) -> Any:
+        if not llm.config.supports_json:
+            pytest.skip(f"{llm} doesn't support structured output")
+        return function(llm, *args, **kwargs)
 
     return wrapper
 
 
 @requires_structured_output
-def test_generate_object(model: LLMModel):
-    response = model.generate_object(
+def test_generate_object(llm: LLM):
+    response = llm.generate_object(
         Person,
         "Extract information about the person.",
         "Hello, my name is Alice and I like reading and hiking.",
@@ -52,7 +52,7 @@ def test_generate_object(model: LLMModel):
     assert response.object.name == "Alice"
     assert response.object.age is None
     assert response.object.hobbies == ["reading", "hiking"]
-    response = model.generate_object(
+    response = llm.generate_object(
         Person,
         "Extract information about the person.",
         "Hello, my name is Bob, I'm 25, and I like cooking.",
@@ -63,8 +63,8 @@ def test_generate_object(model: LLMModel):
 
 
 @requires_structured_output
-def test_generate_dict(model: LLMModel):
-    response: GenerateObjectResponse[Person] = model.generate_object(
+def test_generate_dict(llm: LLM):
+    response: GenerateObjectResponse[Person] = llm.generate_object(
         PERSON_SCHEMA,
         "Extract information about the person.",
         "Hello, my name is Alice and I like reading and hiking.",
@@ -72,7 +72,7 @@ def test_generate_dict(model: LLMModel):
     assert response.object.name == "Alice"
     assert response.object.age is None
     assert response.object.hobbies == ["reading", "hiking"]
-    response = model.generate_object(
+    response = llm.generate_object(
         PERSON_SCHEMA,
         "Extract information about the person.",
         "Hello, my name is Bob, I'm 25, and I like cooking.",

@@ -1,34 +1,47 @@
 from __future__ import annotations
-
-import logging
-from contextlib import contextmanager
+from contextlib import asynccontextmanager
 from functools import cached_property
-from typing import Iterator, cast
+from typing import TYPE_CHECKING, AsyncIterator, cast
 
 from pydantic import BaseModel
 
-from llemon.sync.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
+import llemon
+from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils import schema_to_model
 
-log = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from llemon import (
+        ClassifyResponse,
+        Conversation,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamResponse,
+        LLMConfig,
+        LLMProvider,
+        LLMTokenizer,
+    )
 
 
-class LLMModel:
+class LLM:
 
-    def __init__(self, llm: LLM, name: str, config: LLMModelConfig) -> None:
-        self.llm = llm
-        self.name = name
+    def __init__(self, provider: LLMProvider, model: str, config: LLMConfig) -> None:
+        self.provider = provider
+        self.model = model
         self.config = config
 
     def __str__(self) -> str:
-        return f"{self.llm}/{self.name}"
+        return f"{self.provider}:{self.model}"
 
     def __repr__(self) -> str:
         return f"<{self}>"
 
     @cached_property
     def tokenizer(self) -> LLMTokenizer:
-        tokenizer_class = LLMTokenizer.get(self.config.tokenizer)
+        if self.config.tokenizer is None:
+            tokenizer_class = llemon.LLMTokenizer
+        else:
+            tokenizer_class = llemon.LLMTokenizer.get_subclass(self.config.tokenizer)
         return tokenizer_class(self)
 
     def conversation(
@@ -39,9 +52,16 @@ class LLMModel:
         history: History | None = None,
         render: RenderArgument = True,
     ) -> Conversation:
-        return Conversation(self, instructions, context=context, tools=tools, history=history, render=render)
+        return llemon.Conversation(
+            llm=self,
+            instructions=instructions,
+            context=context,
+            tools=tools,
+            history=history,
+            render=render,
+        )
 
-    def generate(
+    async def generate(
         self,
         message1: str | None = None,
         message2: str | None = None,
@@ -67,8 +87,8 @@ class LLMModel:
         return_incomplete_message: bool | None = None,
     ) -> GenerateResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
-        request = GenerateRequest(
-            model=self,
+        request = llemon.GenerateRequest(
+            llm=self,
             user_input=user_input,
             instructions=instructions,
             history=history,
@@ -90,10 +110,10 @@ class LLMModel:
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
         )
-        with self._standalone(request):
-            return self.llm.generate(request)
+        async with self._standalone(request):
+            return await self.provider.generate(request)
 
-    def generate_stream(
+    async def generate_stream(
         self,
         message1: str | None = None,
         message2: str | None = None,
@@ -118,8 +138,8 @@ class LLMModel:
         return_incomplete_message: bool | None = None,
     ) -> GenerateStreamResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
-        request = GenerateStreamRequest(
-            model=self,
+        request = llemon.GenerateStreamRequest(
+            llm=self,
             user_input=user_input,
             instructions=instructions,
             history=history,
@@ -140,10 +160,10 @@ class LLMModel:
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
         )
-        with self._standalone(request):
-            return self.llm.generate_stream(request)
+        async with self._standalone(request):
+            return await self.provider.generate_stream(request)
 
-    def generate_object[T: BaseModel](
+    async def generate_object[T: BaseModel](
         self,
         schema: NS | type[T],
         message1: str | None = None,
@@ -171,9 +191,9 @@ class LLMModel:
         else:
             model_class = schema
         instructions, user_input = self._resolve_messages(message1, message2)
-        request = GenerateObjectRequest(
+        request = llemon.GenerateObjectRequest(
             schema=model_class,
-            model=self,
+            llm=self,
             user_input=user_input,
             instructions=instructions,
             history=history,
@@ -192,10 +212,10 @@ class LLMModel:
             top_k=top_k,
             prediction=prediction,
         )
-        with self._standalone(request):
-            return self.llm.generate_object(request)
+        async with self._standalone(request):
+            return await self.provider.generate_object(request)
 
-    def classify(
+    async def classify(
         self,
         question: str,
         answers: list[str] | type[bool],
@@ -210,8 +230,8 @@ class LLMModel:
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
     ) -> ClassifyResponse:
-        request = ClassifyRequest(
-            model=self,
+        request = llemon.ClassifyRequest(
+            llm=self,
             question=question,
             answers=answers,
             user_input=user_input,
@@ -224,29 +244,19 @@ class LLMModel:
             tools=tools,
             use_tool=use_tool,
         )
-        with self._standalone(request):
-            return self.llm.classify(request)
+        async with self._standalone(request):
+            return await self.provider.classify(request)
 
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:
             return None, message1
         return message1, message2
 
-    @contextmanager
-    def _standalone(self, request: GenerateRequest) -> Iterator[None]:
+    @asynccontextmanager
+    async def _standalone(self, request: GenerateRequest) -> AsyncIterator[None]:
         state: NS = {}
-        self.llm.prepare(request, state)
+        await self.provider.prepare_generation(request, state)
         try:
             yield
         finally:
-            self.llm.cleanup(state)
-
-
-from llemon.sync.conversation import Conversation
-from llemon.sync.llm import LLM
-from llemon.sync.llm_model_config import LLMModelConfig
-from llemon.sync.llm_tokenizer import LLMTokenizer
-from llemon.sync.classify import ClassifyRequest, ClassifyResponse
-from llemon.sync.generate import GenerateRequest, GenerateResponse
-from llemon.sync.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.sync.generate_stream import GenerateStreamRequest, GenerateStreamResponse
+            await self.provider.cleanup_generation(state)

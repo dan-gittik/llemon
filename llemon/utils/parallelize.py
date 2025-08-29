@@ -1,9 +1,10 @@
+from __future__ import annotations
 import asyncio
 import inspect
 from concurrent.futures import Future, ThreadPoolExecutor, wait
 from typing import Any, Callable, Iterable
 
-from llemon.utils.concat import concat
+from .concat import concat
 
 type Invocations = Iterable[Callable[..., Any] | tuple[Callable[..., Any], *tuple[Any, ...]]]
 

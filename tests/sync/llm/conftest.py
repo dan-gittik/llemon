@@ -8,7 +8,7 @@ from llemon.sync import (
     DeepInfra,
     Error,
     Gemini,
-    LLMModel,
+    LLMProvider,
     OpenAI,
 )
 
@@ -21,11 +21,11 @@ from llemon.sync import (
         pytest.param((DeepInfra, "meta-llama/Meta-Llama-3.1-8B-Instruct"), id="deepinfra-llama-3.1-8b"),
     ]
 )
-def model(request: pytest.FixtureRequest) -> Iterator[LLMModel]:
-    provider: type[LLM] = request.param[0]
+def llm(request: pytest.FixtureRequest) -> Iterator[LLM]:
+    provider: type[LLMProvider] = request.param[0]
     model: str = request.param[1]
     try:
-        yield provider.model(model)
+        yield provider.llm(model)
     except Error:
         pytest.skip(f"provider {provider.__name__} doesn isn't available")
     provider.models.clear()

@@ -1,17 +1,19 @@
 from __future__ import annotations
-
 import json
 from functools import cached_property
-from typing import ClassVar, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from pydantic import BaseModel
 
-from llemon.objects.generate import GenerateRequest, GenerateResponse
+import llemon
 from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils import schema_to_model
 
+if TYPE_CHECKING:
+    from llemon import LLM
 
-class GenerateObjectRequest[T: BaseModel](GenerateRequest):
+
+class GenerateObjectRequest[T: BaseModel](llemon.GenerateRequest):
 
     JSON_INSTRUCTION: ClassVar[
         str
@@ -19,11 +21,12 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
     # JSON Generation Guidelines
     Answer ONLY in JSON that adheres EXACTLY to the following JSON schema:
     <SCHEMA>
-    
+
     Return the ROOT object with field names EXACTLY as they appear in the JSON schema.
-    For example, for:
+
+    # Example
     {"title": "A", "type": "object", "properties": {"foo": {"type": "string"}, "bar": {"type": "int"}}}
-    The answer should be:
+    Should be:
     {"foo": "hello", "bar": 1}
     Not:
     - {"Foo": "hello", "Bar": 1}
@@ -35,7 +38,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
     def __init__(
         self,
         *,
-        model: LLMModel,
+        llm: LLM,
         schema: NS | type[T],
         history: History | None = None,
         instructions: str | None = None,
@@ -56,7 +59,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
         prediction: str | NS | T | None = None,
     ) -> None:
         super().__init__(
-            model=model,
+            llm=llm,
             history=history,
             instructions=instructions,
             user_input=user_input,
@@ -80,13 +83,16 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
         else:
             self.schema = schema
 
+    def __str__(self) -> str:
+        return f"{self.llm}.generate_object({self.schema.__name__})"
+
     def append_json_instruction(self) -> None:
         self.append_instruction(self.JSON_INSTRUCTION.replace("<SCHEMA>", json.dumps(self.schema.model_json_schema())))
 
     def check_supported(self) -> None:
         super().check_supported()
-        if not self.model.config.supports_objects:
-            raise Error(f"{self.model} doesn't support object generation")
+        if not self.llm.config.supports_objects:
+            raise Error(f"{self.llm} doesn't support object generation")
 
     def _resolve_prediction(self, prediction: str | NS | T | None) -> str | None:
         if prediction is None:
@@ -99,7 +105,7 @@ class GenerateObjectRequest[T: BaseModel](GenerateRequest):
             return str(prediction)
 
 
-class GenerateObjectResponse[T: BaseModel](GenerateResponse):
+class GenerateObjectResponse[T: BaseModel](llemon.GenerateResponse):
 
     request: GenerateObjectRequest[T]
 
@@ -108,7 +114,7 @@ class GenerateObjectResponse[T: BaseModel](GenerateResponse):
         self._objects: list[T] = []
 
     def __str__(self) -> str:
-        return f"{self.request.model}: {self.object}"
+        return f"{self.request.llm}: {self.object!r}"
 
     @cached_property
     def objects(self) -> list[T]:
@@ -127,6 +133,3 @@ class GenerateObjectResponse[T: BaseModel](GenerateResponse):
     def complete_object(self, *objects: T) -> None:
         self._objects = list(objects)
         super().complete_text(*[object.model_dump_json() for object in objects])
-
-
-from llemon.genai.llm_model import LLMModel

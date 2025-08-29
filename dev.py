@@ -229,6 +229,7 @@ def _async_to_sync(text: str, async_paths: list[pathlib.Path]) -> str:
         relative = path.relative_to(ROOT / PACKAGE)
         import_path = str(relative).removesuffix(".py").replace("/", ".")
         text = text.replace(f"from {PACKAGE}.{import_path} import", f"from {PACKAGE}.sync.{relative.stem} import")
+    text = text.replace("import llemon", "import llemon.sync as llemon")
     # Change async quirks to standard usage.
     text = text.replace("self.client.aio", "self.client")
     # Remove pytest_asyncio import and replace references to it with pytest.

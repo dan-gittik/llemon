@@ -1,18 +1,30 @@
 from __future__ import annotations
-
 import copy
 import re
 import warnings
 from types import TracebackType
-from typing import Iterator
+from typing import TYPE_CHECKING, Iterator
 
 from pydantic import BaseModel
 
-from llemon.objects.file import File
-from llemon.objects.rendering import Rendering
-from llemon.objects.tool import resolve_tools
+import llemon
 from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils import async_parallelize
+
+if TYPE_CHECKING:
+    from llemon import (
+        LLM,
+        Embedder,
+        ClassifyResponse,
+        File,
+        Request,
+        Response,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamResponse,
+        EmbedResponse,
+    )
 
 SPACES = re.compile(r"\s+")
 
@@ -21,7 +33,9 @@ class Conversation:
 
     def __init__(
         self,
-        model: LLMModel,
+        *,
+        llm: LLM,
+        embedder: Embedder | None = None,
         instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
@@ -34,12 +48,15 @@ class Conversation:
             context = {}
         if tools is None:
             tools = []
+        if embedder is None and isinstance(llm.provider, llemon.EmbedderProvider):
+            embedder = llm.provider.default_embedder
         self.finished = False
-        self.model = model
+        self.llm = llm
+        self.embedder = embedder
         self.instructions = instructions
         self.context = context
-        self.rendering = Rendering.resolve(render)
-        self.tools = resolve_tools(tools)
+        self.rendering = llemon.Rendering.resolve(render)
+        self.tools = llemon.Tool.resolve(tools)
         self.history = history
         self._state: NS = {}
 
@@ -82,14 +99,10 @@ class Conversation:
 
     @classmethod
     def load(cls, data: NS) -> Conversation:
-        return load(Conversation, data["conversation"], data)
-
-    @property
-    def llm(self) -> LLM:
-        return self.model.llm
+        return llemon.load(Conversation, data["conversation"], data)
 
     def dump(self) -> NS:
-        data, state = dump(self)
+        data, state = llemon.dump(self)
         return dict(
             conversation=data,
             **state,
@@ -97,7 +110,7 @@ class Conversation:
 
     def replace(
         self,
-        model: LLMModel | None = None,
+        llm: LLM | None = None,
         instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
@@ -105,7 +118,7 @@ class Conversation:
         history: History | None = None,
     ) -> Conversation:
         return self.__class__(
-            model=model or self.model,
+            llm=llm or self.llm,
             instructions=instructions or self.instructions,
             context=context or self.context.copy(),
             render=render or self.rendering,
@@ -116,13 +129,13 @@ class Conversation:
     async def prepare(self) -> Conversation:
         self._assert_not_finished()
         self.history = self._copy_history()
-        await async_parallelize((self.llm.prepare, request, self._state) for request, _ in self)
+        await async_parallelize((self.llm.provider.prepare_generation, request, self._state) for request, _ in self.history)
         return self
 
     async def finish(self, cleanup: bool = True) -> None:
         self._assert_not_finished()
         if cleanup:
-            await self.llm.cleanup(self._state)
+            await self.llm.provider.cleanup_generation(self._state)
         self.finished = True
 
     async def render_instructions(self) -> str:
@@ -169,8 +182,8 @@ class Conversation:
         return_incomplete_message: bool | None = None,
     ) -> GenerateResponse:
         self._assert_not_finished()
-        request = GenerateRequest(
-            model=self.model,
+        request = llemon.GenerateRequest(
+            llm=self.llm,
             instructions=instructions or self.instructions,
             user_input=message,
             context=self.context | (context or {}),
@@ -192,8 +205,8 @@ class Conversation:
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
         )
-        await self.llm.prepare(request, self._state)
-        response = await self.llm.generate(request)
+        await self.llm.provider.prepare_generation(request, self._state)
+        response = await self.llm.provider.generate(request)
         if save:
             self.history.append((request, response))
         return response
@@ -222,8 +235,8 @@ class Conversation:
         return_incomplete_message: bool | None = None,
     ) -> GenerateStreamResponse:
         self._assert_not_finished()
-        request = GenerateStreamRequest(
-            model=self.model,
+        request = llemon.GenerateStreamRequest(
+            llm=self.llm,
             instructions=instructions or self.instructions,
             user_input=message,
             context=self.context | (context or {}),
@@ -244,8 +257,8 @@ class Conversation:
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
         )
-        await self.llm.prepare(request, self._state)
-        response = await self.llm.generate_stream(request)
+        await self.llm.provider.prepare_generation(request, self._state)
+        response = await self.llm.provider.generate_stream(request)
         if save:
             self.history.append((request, response))
         return response
@@ -273,9 +286,9 @@ class Conversation:
         prediction: str | NS | T | None = None,
     ) -> GenerateObjectResponse[T]:
         self._assert_not_finished()
-        request = GenerateObjectRequest(
+        request = llemon.GenerateObjectRequest(
+            llm=self.llm,
             schema=schema,
-            model=self.model,
             instructions=instructions or self.instructions,
             user_input=message,
             context=self.context | (context or {}),
@@ -294,8 +307,8 @@ class Conversation:
             top_k=top_k,
             prediction=prediction,
         )
-        await self.llm.prepare(request, self._state)
-        response = await self.llm.generate_object(request)
+        await self.llm.provider.prepare_generation(request, self._state)
+        response = await self.llm.provider.generate_object(request)
         if save:
             self.history.append((request, response))
         return response
@@ -316,8 +329,8 @@ class Conversation:
         use_tool: bool | str | None = None,
     ) -> ClassifyResponse:
         self._assert_not_finished()
-        request = ClassifyRequest(
-            model=self.model,
+        request = llemon.ClassifyRequest(
+            llm=self.llm,
             question=question,
             answers=answers,
             user_input=user_input,
@@ -329,10 +342,18 @@ class Conversation:
             tools=[*self.tools, *(tools or [])],
             use_tool=use_tool,
         )
-        await self.llm.prepare(request, self._state)
-        response = await self.llm.classify(request)
+        await self.llm.provider.prepare_generation(request, self._state)
+        response = await self.llm.provider.classify(request)
         if save:
             self.history.append((request, response))
+        return response
+    
+    async def embed(self, text: str) -> EmbedResponse:
+        self._assert_not_finished()
+        if not self.embedder:
+            raise Error(f"{self!r} has no embedder associated with it")
+        request = llemon.EmbedRequest(embedder=self.embedder, text=text)
+        response = await self.embedder.provider.embed(request)
         return response
 
     def _assert_not_finished(self) -> None:
@@ -353,13 +374,3 @@ class Conversation:
                 request.files = files
             history.append((request, response))
         return history
-
-
-from llemon.genai.llm import LLM
-from llemon.genai.llm_model import LLMModel
-from llemon.objects.classify import ClassifyRequest, ClassifyResponse
-from llemon.objects.generate import GenerateRequest, GenerateResponse
-from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.objects.request import Request, Response
-from llemon.serialization import dump, load

@@ -1,19 +1,21 @@
 from __future__ import annotations
-
 from functools import cached_property
-from typing import AsyncIterator
+from typing import TYPE_CHECKING, AsyncIterator
 
-from llemon.objects.generate import GenerateRequest, GenerateResponse
+import llemon
 from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
 from llemon.utils import now
 
+if TYPE_CHECKING:
+    from llemon import LLM
 
-class GenerateStreamRequest(GenerateRequest):
+
+class GenerateStreamRequest(llemon.GenerateRequest):
 
     def __init__(
         self,
         *,
-        model: LLMModel,
+        llm: LLM,
         history: History | None = None,
         instructions: str | None = None,
         user_input: str | None = None,
@@ -35,7 +37,7 @@ class GenerateStreamRequest(GenerateRequest):
         return_incomplete_message: bool | None = None,
     ) -> None:
         super().__init__(
-            model=model,
+            llm=llm,
             history=history,
             instructions=instructions,
             user_input=user_input,
@@ -57,13 +59,16 @@ class GenerateStreamRequest(GenerateRequest):
             return_incomplete_message=return_incomplete_message,
         )
 
+    def __str__(self) -> str:
+        return f"{self.llm}.generate_stream({self.user_input!r})"
+
     def check_supported(self) -> None:
         super().check_supported()
-        if not self.model.config.supports_streaming:
-            raise Error(f"{self.model} doesn't support streaming")
+        if not self.llm.config.supports_streaming:
+            raise Error(f"{self.llm} doesn't support streaming")
 
 
-class GenerateStreamResponse(GenerateResponse):
+class GenerateStreamResponse(llemon.GenerateResponse):
 
     request: GenerateStreamRequest
 
@@ -75,7 +80,7 @@ class GenerateStreamResponse(GenerateResponse):
 
     def __str__(self) -> str:
         end = "..." if not self.ended else ""
-        return f"{self.request.model}: {''.join(self._chunks)}{end}"
+        return f"{self.request.llm}: {'|'.join(self._chunks)}{end}"
 
     async def __aiter__(self) -> AsyncIterator[StreamDelta]:
         if self.stream is None:
@@ -100,6 +105,3 @@ class StreamDelta:
 
     def __init__(self, text: str) -> None:
         self.text = text
-
-
-from llemon.genai.llm_model import LLMModel

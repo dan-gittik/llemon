@@ -1,8 +1,7 @@
 from __future__ import annotations
-
 import json
 import logging
-from typing import AsyncIterator, Literal, cast
+from typing import TYPE_CHECKING, AsyncIterator, Literal, cast
 
 import openai
 from openai.types.chat import (
@@ -31,16 +30,25 @@ from openai.types.completion_usage import CompletionUsage
 from openai.types.shared_params import FunctionDefinition, ResponseFormatJSONObject
 from pydantic import BaseModel
 
-from llemon.genai.llm import LLM
-from llemon.genai.llm_model_property import LLMModelProperty
-from llemon.objects.classify import ClassifyRequest, ClassifyResponse
-from llemon.objects.file import File
-from llemon.objects.generate import GenerateRequest, GenerateResponse
-from llemon.objects.generate_object import GenerateObjectRequest, GenerateObjectResponse
-from llemon.objects.generate_stream import GenerateStreamRequest, GenerateStreamResponse
-from llemon.objects.tool import Call
+import llemon
 from llemon.types import NS, Error, ToolCalls, ToolDeltas, ToolStream
-from llemon.utils import ASSISTANT, SYSTEM, USER, async_parallelize
+from llemon.utils import Emoji, async_parallelize
+
+if TYPE_CHECKING:
+    from llemon import (
+        Call,
+        ClassifyRequest,
+        ClassifyResponse,
+        EmbedRequest,
+        EmbedResponse,
+        File,
+        GenerateObjectRequest,
+        GenerateObjectResponse,
+        GenerateRequest,
+        GenerateResponse,
+        GenerateStreamRequest,
+        GenerateStreamResponse,
+    )
 
 FILE_IDS = "openai.file_ids"
 FILE_HASHES = "openai.file_hashes"
@@ -48,81 +56,84 @@ FILE_HASHES = "openai.file_hashes"
 log = logging.getLogger(__name__)
 
 
-class OpenAI(LLM):
+class OpenAI(llemon.LLMProvider, llemon.EmbedderProvider):
 
-    gpt5 = LLMModelProperty("gpt-5")
-    gpt5_mini = LLMModelProperty("gpt-5-mini")
-    gpt5_nano = LLMModelProperty("gpt-5-nano")
-    gpt41 = LLMModelProperty("gpt-4.1")
-    gpt41_mini = LLMModelProperty("gpt-4.1-mini")
-    gpt41_nano = LLMModelProperty("gpt-4.1-nano")
-    gpt4o = LLMModelProperty("gpt-4o")
-    gpt4o_mini = LLMModelProperty("gpt-4o-mini")
-    gpt4 = LLMModelProperty("gpt-4")
-    gpt4_turbo = LLMModelProperty("gpt-4-turbo")
-    gpt35_turbo = LLMModelProperty("gpt-3.5-turbo")
+    gpt5 = llemon.LLMProperty("gpt-5")
+    gpt5_mini = llemon.LLMProperty("gpt-5-mini")
+    gpt5_nano = llemon.LLMProperty("gpt-5-nano")
+    gpt41 = llemon.LLMProperty("gpt-4.1")
+    gpt41_mini = llemon.LLMProperty("gpt-4.1-mini")
+    gpt41_nano = llemon.LLMProperty("gpt-4.1-nano")
+    gpt4o = llemon.LLMProperty("gpt-4o")
+    gpt4o_mini = llemon.LLMProperty("gpt-4o-mini")
+    gpt4 = llemon.LLMProperty("gpt-4")
+    gpt4_turbo = llemon.LLMProperty("gpt-4-turbo")
+    gpt35_turbo = llemon.LLMProperty("gpt-3.5-turbo")
+
+    embedding_ada = llemon.EmbedderProperty("text-embedding-ada-002")
+    embedding3_small = llemon.EmbedderProperty("text-embedding-3-small")
+    embedding3_large = llemon.EmbedderProperty("text-embedding-3-large")
+    default_embedder = embedding3_small
 
     def __init__(self, api_key: str) -> None:
         self.client = openai.AsyncOpenAI(api_key=api_key)
 
-    async def prepare(self, request: GenerateRequest, state: NS) -> None:
-        await super().prepare(request, state)
-        if request.files:
-            log.debug("uploading files")
-        await async_parallelize((self._upload_file, file, state) for file in request.files)
+    async def prepare_generation(self, request: GenerateRequest, state: NS) -> None:
+        await super().prepare_generation(request, state)
+        if isinstance(request, llemon.GenerateRequest):
+            if request.files:
+                log.debug("uploading files")
+            await async_parallelize((self._upload_file, file, state) for file in request.files)
 
-    async def cleanup(self, state: NS) -> None:
+    async def cleanup_generation(self, state: NS) -> None:
         await async_parallelize((self._delete_file, file_id) for file_id in state.pop(FILE_IDS, set()))
         state.pop(FILE_HASHES, None)
-        await super().cleanup(state)
+        await super().cleanup_generation(state)
 
     async def count_tokens(self, request: GenerateRequest) -> int:
-        # messages = await self._messages(request)
         raise NotImplementedError()
 
+    async def embed(self, request: EmbedRequest) -> EmbedResponse:
+        response = llemon.EmbedResponse(request)
+        try:
+            openai_response = await self.client.embeddings.create(
+                model=request.embedder.model,
+                input=request.text,
+            )
+        except openai.APIError as error:
+            raise request.error(str(error))
+        response.input_tokens += openai_response.usage.prompt_tokens or 0
+        if not openai_response.data:
+            raise request.error(f"{request} has no response")
+        response.complete_embedding(openai_response.data[0].embedding)
+        return response
+
     async def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return await self._generate(request, GenerateResponse(request))
+        return await self._generate(request, llemon.GenerateResponse(request))
 
     async def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return await self._generate_stream(request, GenerateStreamResponse(request))
+        return await self._generate_stream(request, llemon.GenerateStreamResponse(request))
 
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        if not request.model.config.supports_structured_output:
-            return await self._generate_json(request, GenerateObjectResponse(request))
-        return await self._generate_object(request, GenerateObjectResponse(request))
+        if not request.llm.config.supports_structured_output:
+            return await self._generate_json(request, llemon.GenerateObjectResponse(request))
+        return await self._generate_object(request, llemon.GenerateObjectResponse(request))
 
     async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        response = ClassifyResponse(request)
-        reasoning: str | None = None
-        if request.use_logit_biasing:
-            log.debug("classifying with logit biasing")
-            tokens = [str(i) for i in range(len(request.answers))]
-            token_ids = await request.model.tokenizer.encode(*tokens)
-            if len(token_ids) != len(request.answers):
-                raise request.error(f"can't do classification with {len(request.answers)} answers")
-            logit_bias = {str(token_id): 100 for token_id in token_ids}
-            generate_response = await self._generate(request, GenerateResponse(request), logit_bias=logit_bias)
-            answer_num = int(generate_response.text)
-        elif request.model.config.supports_objects:
-            log.debug("classifying with structured output")
-            generate_object_request = request.to_object_request()
-            generate_object_response = await self._generate_object(
-                generate_object_request, GenerateObjectResponse(generate_object_request)
-            )
-            data = generate_object_response.object.model_dump()
-            answer_num = cast(int, data["answer"])
-            reasoning = data.get("reasoning")
-        else:
-            log.debug("classifying with generated text")
-            generate_response = await self._generate(request, GenerateResponse(request))
-            if not generate_response.text.isdigit():
-                raise request.error(f"{request} answer was not a number: {generate_response.text}")
-            answer_num = int(generate_response.text)
-        if not 0 <= answer_num < len(request.answers):
-            raise request.error(f"{request} answer number was out of range: {answer_num}")
+        if not request.use_logit_biasing:
+            return await super().classify(request)
+        response = llemon.ClassifyResponse(request)
+        log.debug("classifying with logit biasing")
+        tokens = [str(i) for i in range(len(request.answers))]
+        token_ids = await request.llm.tokenizer.encode(*tokens)
+        if len(token_ids) != len(request.answers):
+            raise request.error(f"can't do classification with {len(request.answers)} answers")
+        logit_bias = {str(token_id): 100 for token_id in token_ids}
+        generate_response = await self._generate(request, llemon.GenerateResponse(request), logit_bias=logit_bias)
+        answer_num = int(generate_response.text)
         answer = request.answers[answer_num]
-        log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
-        response.complete_answer(answer, reasoning)
+        log.debug("classification: %s", answer)
+        response.complete_answer(answer)
         return response
 
     async def _upload_file(self, file: File, state: NS) -> None:
@@ -153,19 +164,20 @@ class OpenAI(LLM):
         messages: list[ChatCompletionMessageParam] = []
         if request.instructions:
             instructions = await request.render_instructions()
-            log.debug(SYSTEM + "%s", instructions)
+            log.debug(Emoji.SYSTEM + "%s", instructions)
             messages.append(self._system(instructions))
         if request.history:
             self._log_history(request.history)
             for request_, response_ in request.history:
-                if not isinstance(request_, GenerateRequest) or not isinstance(response_, GenerateResponse):
+                if not isinstance(request_, llemon.GenerateRequest):
                     continue
+                assert isinstance(response_, llemon.GenerateResponse)
                 messages.append(await self._user(request_.user_input, request_.files))
                 if response_.calls:
                     messages.append(self._tool_call(response_.calls))
                     messages.extend(self._tool_results(response_.calls))
                 messages.append(self._assistant(response_.text))
-        log.debug(USER + "%s", request.user_input)
+        log.debug(Emoji.USER + "%s", request.user_input)
         messages.append(await self._user(request.user_input, request.files))
         return messages
 
@@ -246,7 +258,7 @@ class OpenAI(LLM):
                 extra_body["repetition_penalty"] = request.repetition_penalty
             response_format = ResponseFormatJSONObject(type="json_object") if json else openai.NOT_GIVEN
             openai_response = await self.client.chat.completions.create(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
@@ -272,7 +284,7 @@ class OpenAI(LLM):
             return await self._generate(request, response, messages=messages, json=json)
         result = cast(list[str], result)
         for variant in result:
-            log.debug(ASSISTANT + "%s", variant)
+            log.debug(Emoji.ASSISTANT + "%s", variant)
         response.complete_text(*result)
         return response
 
@@ -289,7 +301,7 @@ class OpenAI(LLM):
             if request.repetition_penalty:
                 extra_body["repetition_penalty"] = request.repetition_penalty
             openai_response = await self.client.chat.completions.create(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
@@ -332,7 +344,7 @@ class OpenAI(LLM):
                     yield delta
             else:
                 response.complete_stream()
-                log.debug(ASSISTANT + "%s", response.text)
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
 
         response.stream = stream()
         return response
@@ -350,7 +362,7 @@ class OpenAI(LLM):
             if request.repetition_penalty:
                 extra_body["repetition_penalty"] = request.repetition_penalty
             openai_response = await self.client.beta.chat.completions.parse(
-                model=request.model.name,
+                model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
@@ -375,7 +387,7 @@ class OpenAI(LLM):
             return await self._generate_object(request, response, messages=messages)
         result = cast(list[T], result)
         for variant in result:
-            log.debug(ASSISTANT + "%s", variant)
+            log.debug(Emoji.ASSISTANT + "%s", variant)
         response.complete_object(*result)
         return response
 
@@ -384,9 +396,9 @@ class OpenAI(LLM):
         request: GenerateObjectRequest[T],
         response: GenerateObjectResponse[T],
     ) -> GenerateObjectResponse[T]:
-        log.debug("%s doesn't support structured output; using JSON instead", request.model)
+        log.debug("%s doesn't support structured output; using JSON instead", request.llm.model)
         request.append_json_instruction()
-        generate_response = await self._generate(request, GenerateResponse(request), json=True)
+        generate_response = await self._generate(request, llemon.GenerateResponse(request), json=True)
         data = request.schema.model_validate_json(generate_response.text)
         response.complete_object(data)
         response.calls = generate_response.calls
