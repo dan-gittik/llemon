@@ -27,6 +27,6 @@ def llm(request: pytest.FixtureRequest) -> Iterator[LLM]:
     try:
         yield provider.llm(model)
     except Error:
-        pytest.skip(f"provider {provider.__name__} doesn isn't available")
+        pytest.skip(f"provider {provider.__name__} isn't available")
     provider.models.clear()
     provider.instance = None
