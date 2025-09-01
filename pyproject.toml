@@ -46,6 +46,7 @@ cov = "python dev.py cov"
 lint = "python dev.py lint"
 type = "python dev.py type"
 sync = "python dev.py sync"
+check-signatures = "python dev.py check-signatures"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

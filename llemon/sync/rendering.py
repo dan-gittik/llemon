@@ -8,7 +8,7 @@ from jinja2 import Environment, StrictUndefined, pass_context
 from jinja2.runtime import Context
 
 from llemon.sync.types import RenderArgument
-from llemon.utils import parallelize, concat, to_sync
+from llemon.utils import concat, parallelize, to_sync
 
 
 class Rendering:

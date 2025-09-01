@@ -1,8 +1,9 @@
 from __future__ import annotations
+
 import asyncio
 import inspect
 from concurrent.futures import Future, ThreadPoolExecutor, wait
-from typing import Any, Callable, Iterable
+from typing import Any, Awaitable, Callable, Iterable
 
 from .concat import concat
 
@@ -49,6 +50,28 @@ async def async_parallelize(calls: Invocations) -> list[Any]:
     if errors:
         raise ExceptionGroup(f"failed to run {concat(failed, 'and')}", errors)
     return results
+
+
+def wait_for[R, **P](timeout: float | None, function: Callable[P, R], /, *args: P.args, **kwargs: P.kwargs) -> R:
+    if not timeout:
+        return function(*args, **kwargs)
+    global executor
+    if executor is None:
+        executor = ThreadPoolExecutor()
+    future = executor.submit(function, *args, **kwargs)
+    return future.result(timeout)
+
+
+async def async_wait_for[R, **P](
+    timeout: float | None,
+    function: Callable[P, Awaitable[R]],
+    /,
+    *args: P.args,
+    **kwargs: P.kwargs,
+) -> R:
+    if not timeout:
+        return await function(*args, **kwargs)
+    return await asyncio.wait_for(function(*args, **kwargs), timeout)
 
 
 def to_sync(function: Callable[..., Any]) -> Callable[..., Any]:

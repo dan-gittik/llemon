@@ -1,10 +1,11 @@
 from __future__ import annotations
+
 import openai
 
 import llemon
 
 
-class Ollama(llemon.OpenAI):
+class Ollama(llemon.OpenAILLM):
 
     def __init__(self) -> None:
         self.client = openai.AsyncOpenAI(

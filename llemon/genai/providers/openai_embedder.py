@@ -1,0 +1,30 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+import openai
+
+import llemon
+
+if TYPE_CHECKING:
+    from llemon import EmbedRequest, EmbedResponse
+
+
+class OpenAIEmbedder(llemon.EmbedderProvider):
+
+    client: openai.AsyncOpenAI
+
+    async def embed(self, request: EmbedRequest) -> EmbedResponse:
+        response = llemon.EmbedResponse(request)
+        try:
+            openai_response = await self.client.embeddings.create(
+                model=request.embedder.model,
+                input=request.text,
+            )
+        except openai.APIError as error:
+            raise request.error(str(error))
+        response.input_tokens += openai_response.usage.prompt_tokens or 0
+        if not openai_response.data:
+            raise request.error(f"{request} has no response")
+        response.complete_embedding(openai_response.data[0].embedding)
+        return response

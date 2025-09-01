@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import logging
 
 from rich.logging import RichHandler
@@ -11,6 +12,7 @@ class Emoji:
     FILE = "📎  "
     TOOL = "🛠️  "
     EMBED = "🧩 "
+    TRANSCRIBE = "🎤 "
 
 
 def enable_logs(level: int = logging.DEBUG) -> None:

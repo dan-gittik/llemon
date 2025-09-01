@@ -1,12 +1,14 @@
 from __future__ import annotations
+
 import json
 import logging
-from typing import TYPE_CHECKING, AsyncIterator, Literal, cast
+from typing import TYPE_CHECKING, AsyncIterator, ClassVar, Literal, cast
 
 from google import genai
 from google.genai.types import (
     AutomaticFunctionCallingConfig,
     Content,
+    CreateCachedContentConfig,
     FinishReason,
     FunctionCallingConfig,
     FunctionCallingConfigMode,
@@ -19,14 +21,13 @@ from google.genai.types import (
     Part,
     Tool,
     ToolConfig,
-    ToolListUnion,
     UserContent,
 )
 from pydantic import BaseModel
 
 import llemon
 from llemon.types import NS, Error, ToolCalls
-from llemon.utils import Emoji, async_parallelize
+from llemon.utils import Cache, Emoji, async_parallelize, async_wait_for
 
 if TYPE_CHECKING:
     from llemon import (
@@ -41,9 +42,12 @@ if TYPE_CHECKING:
     )
 
 log = logging.getLogger(__name__)
+cache = Cache[tuple[str, ...], str]()
 
 
 class Gemini(llemon.LLMProvider):
+
+    default_cache_ttl: ClassVar[int] = 3600
 
     pro25 = llemon.LLMProperty("gemini-2.5-pro")
     flash25 = llemon.LLMProperty("gemini-2.5-flash")
@@ -96,32 +100,55 @@ class Gemini(llemon.LLMProvider):
             top_p=request.top_p,
             top_k=request.top_k,
             stop_sequences=request.stop,
-            tools=self._tools(request),
             automatic_function_calling=AutomaticFunctionCallingConfig(
                 disable=True,
             ),
         )
-        if request.instructions:
-            config.system_instruction = self._system(await request.render_instructions())
-        if request.use_tool is not None:
-            if request.use_tool is False:
-                function_config = FunctionCallingConfig(
-                    mode=FunctionCallingConfigMode.NONE,
-                )
-            elif request.use_tool is True:
-                function_config = FunctionCallingConfig(
-                    mode=FunctionCallingConfigMode.ANY,
-                )
-            else:
-                function_config = FunctionCallingConfig(
-                    mode=FunctionCallingConfigMode.ANY,
-                    allowed_function_names=[request.get_tool_name(request.use_tool)],
-                )
-            config.tool_config = ToolConfig(function_calling_config=function_config)
+        instructions = await request.render_instructions()
+        tools = self._tools(request)
+        tool_config = self._tool_config(request)
+        cache_name = await self._cache(request, tools, tool_config)
+        if cache_name:
+            config.cached_content = cache_name
+        else:
+            if instructions:
+                config.system_instruction = instructions
+            if tools:
+                config.tools = list(tools)
+            if tool_config:
+                config.tool_config = tool_config
         if isinstance(request, llemon.GenerateObjectRequest):
             config.response_mime_type = "application/json"
             config.response_schema = request.schema
         return config
+
+    async def _cache(
+        self, request: GenerateRequest, tools: list[Tool] | None, tool_config: ToolConfig | None
+    ) -> str | None:
+        if not request.cache:
+            return None
+        try:
+            instructions = await request.render_instructions()
+            cache_key = tuple([instructions, *(tool.name for tool in request.tools)])
+            cache_name = cache.get(cache_key)
+            if cache_name is not None:
+                return cache_name
+            cache_response = await self.client.aio.caches.create(
+                model=request.llm.model,
+                config=CreateCachedContentConfig(
+                    system_instruction=instructions,
+                    tools=tools,
+                    tool_config=tool_config,
+                    ttl=f"{self.default_cache_ttl}s",
+                ),
+            )
+            cache_name = cache_response.name
+            if not cache_name:
+                return None
+            cache.add(cache_key, cache_name, ttl=self.default_cache_ttl)
+            return cache_name
+        except Exception:
+            return None
 
     async def _contents(self, request: GenerateRequest) -> list[Content]:
         contents: list[Content] = []
@@ -141,9 +168,6 @@ class Gemini(llemon.LLMProvider):
         log.debug(Emoji.USER + "%s", request.user_input)
         contents.append(await self._user(request.user_input, request.files))
         return contents
-
-    def _system(self, instructions: str) -> Content:
-        return Content(parts=[Part.from_text(text=instructions)])
 
     async def _user(self, text: str, files: list[File]) -> UserContent:
         parts: list[Part] = []
@@ -183,10 +207,10 @@ class Gemini(llemon.LLMProvider):
             )
         return Content(role="tool", parts=parts)
 
-    def _tools(self, request: GenerateRequest) -> ToolListUnion | None:
+    def _tools(self, request: GenerateRequest) -> list[Tool] | None:
         if not request.tools or request.use_tool is False:
             return None
-        tools: ToolListUnion = []
+        tools: list[Tool] = []
         for tool in request.tools_dict.values():
             tools.append(
                 Tool(
@@ -201,6 +225,24 @@ class Gemini(llemon.LLMProvider):
             )
         return tools
 
+    def _tool_config(self, request: GenerateRequest) -> ToolConfig | None:
+        if request.use_tool is None:
+            return None
+        if request.use_tool is False:
+            function_config = FunctionCallingConfig(
+                mode=FunctionCallingConfigMode.NONE,
+            )
+        elif request.use_tool is True:
+            function_config = FunctionCallingConfig(
+                mode=FunctionCallingConfigMode.ANY,
+            )
+        else:
+            function_config = FunctionCallingConfig(
+                mode=FunctionCallingConfigMode.ANY,
+                allowed_function_names=[request.get_tool_name(request.use_tool)],
+            )
+        return ToolConfig(function_calling_config=function_config)
+
     async def _generate(
         self,
         request: GenerateRequest,
@@ -213,14 +255,17 @@ class Gemini(llemon.LLMProvider):
         if contents is None:
             contents = await self._contents(request)
         try:
-            gemini_response = await self.client.aio.models.generate_content(
+            gemini_response = await async_wait_for(
+                request.timeout,
+                self.client.aio.models.generate_content,
                 model=request.llm.model,
                 contents=contents,
                 config=config,
             )
         except Exception as error:
             raise request.error(str(error))
-        request.id = gemini_response.response_id
+        if gemini_response.response_id:
+            request.id = gemini_response.response_id
         self._set_usage(response, gemini_response.usage_metadata)
         result, is_tool = self._parse_response(request, gemini_response)
         if is_tool:
@@ -244,7 +289,9 @@ class Gemini(llemon.LLMProvider):
         if contents is None:
             contents = await self._contents(request)
         try:
-            gemini_response = await self.client.aio.models.generate_content_stream(
+            gemini_response = await async_wait_for(
+                request.timeout,
+                self.client.aio.models.generate_content_stream,
                 model=request.llm.model,
                 contents=contents,
                 config=config,
@@ -261,7 +308,8 @@ class Gemini(llemon.LLMProvider):
                 elif result:
                     yield cast(str, result[0])
                 if chunk.usage_metadata:
-                    request.id = chunk.response_id
+                    if chunk.response_id:
+                        request.id = chunk.response_id
                     self._set_usage(response, chunk.usage_metadata)
             if tool_calls:
                 await self._run_tools(request, response, contents, tool_calls)
@@ -288,14 +336,17 @@ class Gemini(llemon.LLMProvider):
         if contents is None:
             contents = await self._contents(request)
         try:
-            gemini_response = await self.client.aio.models.generate_content(
+            gemini_response = await async_wait_for(
+                request.timeout,
+                self.client.aio.models.generate_content,
                 model=request.llm.model,
                 contents=contents,
                 config=config,
             )
         except Exception as error:
             raise request.error(str(error))
-        request.id = gemini_response.response_id
+        if gemini_response.response_id:
+            request.id = gemini_response.response_id
         self._set_usage(response, gemini_response.usage_metadata)
         result, is_tool = self._parse_response(request, gemini_response)
         if is_tool:

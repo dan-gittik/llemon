@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING, Iterator, ClassVar, Literal, cast
+from typing import TYPE_CHECKING, ClassVar, Iterator, Literal, cast
 
 import anthropic
 from anthropic.types import (
     Base64ImageSourceParam,
     Base64PDFSourceParam,
-    ContentBlockParam,
+    CacheControlEphemeralParam,
     DocumentBlockParam,
     ImageBlockParam,
     MessageDeltaUsage,
@@ -69,13 +69,13 @@ class Anthropic(llemon.LLMProvider):
         return response.input_tokens
 
     def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return self._generate(request, GenerateResponse(request))
+        return self._generate(request, llemon.GenerateResponse(request))
 
     def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return self._generate_stream(request, GenerateStreamResponse(request))
+        return self._generate_stream(request, llemon.GenerateStreamResponse(request))
 
     def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        return self._generate_object(request, GenerateObjectResponse(request))
+        return self._generate_object(request, llemon.GenerateObjectResponse(request))
 
     def _messages(self, request: GenerateRequest) -> list[MessageParam]:
         messages: list[MessageParam] = []
@@ -84,21 +84,37 @@ class Anthropic(llemon.LLMProvider):
         if request.history:
             self._log_history(request.history)
             for request_, response_ in request.history:
-                if not isinstance(request_, GenerateRequest) or not isinstance(response_, GenerateResponse):
+                if not isinstance(request_, llemon.GenerateRequest):
                     continue
+                assert isinstance(response_, llemon.GenerateResponse)
                 messages.append(self._user(request_.user_input, request_.files))
                 if response_.calls:
                     messages.append(self._tool_call(response_.calls))
                     messages.append(self._tool_results(response_.calls))
                 messages.append(self._assistant(response_.text))
         log.debug(Emoji.USER + "%s", request.user_input)
-        messages.append(self._user(request.user_input, request.files))
+        messages.append(self._user(request.user_input, request.files, cache=request.cache))
         return messages
 
-    def _user(self, text: str, files: list[File]) -> MessageParam:
-        content: str | list[ContentBlockParam]
+    def _system(self, request: GenerateRequest) -> anthropic.NotGiven | str | list[TextBlockParam]:
+        if not request.instructions:
+            return anthropic.NOT_GIVEN
+        instructions = request.render_instructions()
+        if request.cache:
+            return [
+                TextBlockParam(
+                    type="text",
+                    text=instructions,
+                    cache_control=CacheControlEphemeralParam(
+                        type="ephemeral",
+                    ),
+                ),
+            ]
+        return instructions
+
+    def _user(self, text: str, files: list[File], cache: bool | None = None) -> MessageParam:
+        content: list[TextBlockParam | ImageBlockParam | DocumentBlockParam] = []
         if files:
-            content = []
             if text:
                 content.append(TextBlockParam(type="text", text=text))
             for file in files:
@@ -107,7 +123,9 @@ class Anthropic(llemon.LLMProvider):
                 else:
                     content.append(self._document(file))
         else:
-            content = text
+            content.append(TextBlockParam(type="text", text=text))
+        if cache:
+            content[-1]["cache_control"] = CacheControlEphemeralParam(type="ephemeral")
         return MessageParam(role="user", content=content)
 
     def _image(self, file: File) -> ImageBlockParam:
@@ -185,18 +203,18 @@ class Anthropic(llemon.LLMProvider):
         if messages is None:
             messages = self._messages(request)
         try:
-            instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.create(
                 model=request.llm.model,
                 messages=messages,
                 max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=instructions,
+                system=self._system(request),
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
                 top_k=_optional(request.top_k),
                 stop_sequences=_optional(request.stop),
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
             )
         except anthropic.APIError as error:
             raise request.error(str(error))
@@ -229,18 +247,18 @@ class Anthropic(llemon.LLMProvider):
         if messages is None:
             messages = self._messages(request)
         try:
-            instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.stream(
                 model=request.llm.model,
                 messages=messages,
                 max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=instructions,
+                system=self._system(request),
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
                 top_k=_optional(request.top_k),
                 stop_sequences=_optional(request.stop),
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
             )
         except anthropic.APIError as error:
             raise request.error(str(error))
@@ -248,7 +266,8 @@ class Anthropic(llemon.LLMProvider):
         def stream() -> Iterator[str]:
             tool_stream: ToolStream = {}
             with anthropic_response as events:
-                request.id = events.request_id
+                if events.request_id:
+                    request.id = events.request_id
                 for event in events:
                     if event.type == "message_delta":
                         if not event.delta.stop_reason:
@@ -302,18 +321,18 @@ class Anthropic(llemon.LLMProvider):
             """
         )
         try:
-            instructions = request.render_instructions() if request.instructions else anthropic.NOT_GIVEN
             anthropic_response = self.client.messages.create(
                 model=request.llm.model,
                 messages=messages,
                 max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=instructions,
+                system=self._system(request),
                 temperature=_optional(request.temperature),
                 top_p=_optional(request.top_p),
                 top_k=_optional(request.top_k),
                 stop_sequences=_optional(request.stop),
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
             )
         except anthropic.APIError as error:
             raise request.error(str(error))
@@ -382,7 +401,7 @@ class Anthropic(llemon.LLMProvider):
         messages: list[MessageParam],
         tool_calls: ToolCalls,
     ) -> None:
-        calls = [Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
+        calls = [llemon.Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
         parallelize(call.run for call in calls)
         messages.append(self._tool_call(calls))
         messages.append(self._tool_results(calls))

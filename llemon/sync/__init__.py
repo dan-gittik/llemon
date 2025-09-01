@@ -1,33 +1,46 @@
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .configs import LLM_CONFIGS
+    from ..utils import enable_logs
+    from .anthropic import Anthropic
+    from .call import Call
+    from .classify import ClassifyRequest, ClassifyResponse
+    from .config import CONFIGS, Config
+    from .conversation import Conversation
+    from .database import Database
+    from .deepinfra import DeepInfra
+    from .directory import Directory
+    from .embed import EmbedRequest, EmbedResponse
+    from .embedder import Embedder
+    from .embedder_property import EmbedderProperty
+    from .embedder_provider import EmbedderProvider
+    from .file import File
+    from .gemini import Gemini
+    from .generate import GenerateRequest, GenerateResponse
+    from .generate_object import GenerateObjectRequest, GenerateObjectResponse
+    from .generate_stream import GenerateStreamRequest, GenerateStreamResponse
     from .llm import LLM
     from .llm_config import LLMConfig
     from .llm_property import LLMProperty
     from .llm_provider import LLMProvider
     from .llm_tokenizer import LLMToken, LLMTokenizer
-    from .provider import Provider
-    from .anthropic import Anthropic
-    from .deepinfra import DeepInfra
-    from .gemini import Gemini
     from .ollama import Ollama
     from .openai import OpenAI
-    from .conversation import Conversation
-    from .file import File
-    from .classify import ClassifyRequest, ClassifyResponse
-    from .embed import EmbedRequest, EmbedResponse
-    from .generate import GenerateRequest, GenerateResponse
-    from .generate_object import GenerateObjectRequest, GenerateObjectResponse
-    from .generate_stream import GenerateStreamRequest, GenerateStreamResponse
-    from .request import Request, Response
+    from .openai_embedder import OpenAIEmbedder
+    from .openai_llm import OpenAILLM
+    from .openai_stt import OpenAISTT
+    from .provider import Provider
     from .rendering import Rendering
-    from .serialization import dump, load, serialization
-    from .tool import Call, Tool, Toolbox
-    from .database import Database
-    from .directory import Directory
+    from .request import Request, Response
+    from .serializeable import Serializeable
+    from .stt import STT
+    from .stt_config import STTConfig
+    from .stt_property import STTProperty
+    from .stt_provider import STTProvider
+    from .tool import Tool
+    from .toolbox import Toolbox
+    from .transcribe import TranscribeRequest, TranscribeResponse
     from .types import Error, Warning
-    from ..utils import enable_logs
 
 
 class __Importer:
@@ -38,15 +51,12 @@ class __Importer:
         self.re = __import__("re")
         self.importlib = __import__("importlib")
 
-    def __getattr__(self, name: str) -> Any:
-        return self.get(name)
-
-    def get(self, name: str) -> Any:
+    def __call__(self, name: str) -> Any:
         if not self.sources:
             self.load_sources()
         if name not in self.objects:
             if name not in self.sources:
-                raise AttributeError(name)
+                raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
             module = self.importlib.import_module(self.sources[name], __package__)
             self.objects[name] = getattr(module, name)
         return self.objects[name]
@@ -60,18 +70,12 @@ class __Importer:
                 self.sources[name] = source
 
 
-__importer = __Importer()
-
-
-def __getattr__(name: str):
-    try:
-        return __importer.get(name)
-    except AttributeError:
-        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
+__getattr__ = __Importer()
 
 
 __all__ = [
-    "LLM_CONFIGS",
+    "Config",
+    "CONFIGS",
     "Provider",
     "LLM",
     "LLMConfig",
@@ -79,6 +83,16 @@ __all__ = [
     "LLMProvider",
     "LLMTokenizer",
     "LLMToken",
+    "Embedder",
+    "EmbedderProperty",
+    "EmbedderProvider",
+    "STT",
+    "STTConfig",
+    "STTProperty",
+    "STTProvider",
+    "OpenAILLM",
+    "OpenAISTT",
+    "OpenAIEmbedder",
     "OpenAI",
     "Anthropic",
     "Gemini",
@@ -97,14 +111,14 @@ __all__ = [
     "ClassifyResponse",
     "EmbedRequest",
     "EmbedResponse",
+    "TranscribeRequest",
+    "TranscribeResponse",
     "File",
     "Call",
     "Tool",
     "Toolbox",
     "Rendering",
-    "dump",
-    "load",
-    "serialization",
+    "Serializeable",
     "Directory",
     "Database",
     "Error",

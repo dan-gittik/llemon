@@ -1,39 +1,29 @@
 from __future__ import annotations
+
 import datetime as dt
+import json
+import uuid
 from functools import cached_property
+from typing import TYPE_CHECKING, Self
 
-from llemon.types import NS, Error, History
-from llemon.utils import Superclass, now
+import llemon
+from llemon.types import NS, Error
+from llemon.utils import Superclass, filtered_dict, now
+
+if TYPE_CHECKING:
+    from llemon.objects.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
-class Request(Superclass):
+class Request(Superclass, llemon.Serializeable):
 
-    def __init__(self, history: History | None = None) -> None:
-        if history is None:
-            history = []
-        self.history = history
-        self.id: str | None = None
+    def __init__(self) -> None:
+        self.id = str(uuid.uuid4())
 
     def __str__(self) -> str:
         return "request"
 
     def __repr__(self) -> str:
         return f"<{self}>"
-
-    @classmethod
-    def load(cls, data: NS) -> Request:
-        from llemon.objects.serialization import load
-
-        return load(cls, data["request"], data)
-
-    def dump(self) -> NS:
-        from llemon.objects.serialization import dump
-
-        data, state = dump(self)
-        return dict(
-            request=data,
-            **state,
-        )
 
     def error(self, message: str) -> RequestError:
         return RequestError(self, message)
@@ -44,8 +34,26 @@ class Request(Superclass):
     def check_supported(self) -> None:
         pass
 
+    @classmethod
+    def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
+        request_class = cls.get_subclass(unpacker.get("type", str))
+        args, attrs = request_class._restore(unpacker, refs)
+        request = request_class(**filtered_dict(**args))
+        for name, value in attrs.items():
+            setattr(request, name, value)
+        return request
 
-class Response(Superclass):
+    @classmethod
+    def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
+        raise NotImplementedError()
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        return dict(
+            type=self.__class__.__name__,
+        )
+
+
+class Response(Superclass, llemon.Serializeable):
 
     def __init__(self, request: Request) -> None:
         self.request = request
@@ -58,35 +66,41 @@ class Response(Superclass):
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    @classmethod
-    def load(cls, data: NS) -> Response:
-        from llemon.objects.serialization import load
-
-        request = Request.load(data["request"])
-        return load(cls, data["response"], data, request=request)
-
     @cached_property
     def duration(self) -> float:
         if not self.ended:
             raise self._incomplete_request()
         return (self.ended - self.started).total_seconds()
 
-    def dump(self) -> NS:
-        from llemon.objects.serialization import dump
-
-        request = self.request.dump()
-        data, state = dump(self)
-        return dict(
-            request=request,
-            response=data,
-            **state,
-        )
-
     def complete(self) -> None:
         self.ended = now()
 
     def format(self, emoji: bool = True) -> str:
         raise NotImplementedError()
+
+    @classmethod
+    def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
+        response_class = cls.get_subclass(unpacker.get("type", str))
+        request = refs.get_request(unpacker.get("request", str))
+        response = response_class(request)
+        response.started = dt.datetime.fromisoformat(unpacker.get("started", str))
+        response.ended = dt.datetime.fromisoformat(unpacker.get("ended", str))
+        response_class._restore(response, unpacker, refs)
+        return response
+
+    def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
+        raise NotImplementedError()
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        if not self.ended:
+            raise self._incomplete_request()
+        refs.add_request(self.request)
+        return filtered_dict(
+            type=self.__class__.__name__,
+            request=self.request.id,
+            started=self.started.isoformat(),
+            ended=self.ended.isoformat(),
+        )
 
     def _incomplete_request(self) -> Error:
         return Error(f"{self.request} hasn't completed yet")
@@ -97,3 +111,6 @@ class RequestError(Error):
     def __init__(self, request: Request, message: str) -> None:
         super().__init__(message)
         self.request = request
+
+    def __str__(self) -> str:
+        return f"{super()}:\n{json.dumps(self.request.dump(), indent=2)}"

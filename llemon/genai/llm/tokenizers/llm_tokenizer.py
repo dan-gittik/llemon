@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import json
 from typing import TYPE_CHECKING, Sequence
 
@@ -52,7 +53,7 @@ class LLMTokenizer(Superclass):
             request = llemon.GenerateObjectRequest[BaseModel](schema=schema, **args)
         else:
             request = llemon.GenerateRequest(**args)
-        if self._count is not LLMTokenizer._count:
+        if self.__class__._count is not LLMTokenizer._count:
             return await self._count_tokens(request)
         return await self.llm.provider.count_tokens(request)
 

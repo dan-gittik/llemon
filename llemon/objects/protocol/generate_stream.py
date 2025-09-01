@@ -1,13 +1,15 @@
 from __future__ import annotations
+
 from functools import cached_property
 from typing import TYPE_CHECKING, AsyncIterator
 
 import llemon
-from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils import now
+from llemon.types import NS, Error, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument
+from llemon.utils import filtered_dict, now
 
 if TYPE_CHECKING:
     from llemon import LLM
+    from llemon.objects.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
 class GenerateStreamRequest(llemon.GenerateRequest):
@@ -16,11 +18,11 @@ class GenerateStreamRequest(llemon.GenerateRequest):
         self,
         *,
         llm: LLM,
-        history: History | None = None,
         instructions: str | None = None,
         user_input: str | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
@@ -31,18 +33,21 @@ class GenerateStreamRequest(llemon.GenerateRequest):
         presence_penalty: float | None = None,
         repetition_penalty: float | None = None,
         top_p: float | None = None,
+        min_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
         prediction: str | None = None,
         return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(
             llm=llm,
-            history=history,
             instructions=instructions,
             user_input=user_input,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
@@ -53,10 +58,13 @@ class GenerateStreamRequest(llemon.GenerateRequest):
             presence_penalty=presence_penalty,
             repetition_penalty=repetition_penalty,
             top_p=top_p,
+            min_p=min_p,
             top_k=top_k,
             stop=stop,
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
+            cache=cache,
+            timeout=timeout,
         )
 
     def __str__(self) -> str:
@@ -98,7 +106,21 @@ class GenerateStreamResponse(llemon.GenerateResponse):
         return self._ttft or 0.0
 
     def complete_stream(self) -> None:
-        super().complete_text("".join(self._chunks))
+        self.complete_text("".join(self._chunks))
+
+    def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
+        super()._restore(unpacker, refs)
+        self._chunks = unpacker.get("chunks", list)
+        self._ttft = unpacker.get("ttft", float)
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        data = filtered_dict(
+            text=self.text,
+            chunks=self._chunks,
+            ttft=self.ttft,
+        )
+        data.update(super()._dump(refs))
+        return data
 
 
 class StreamDelta:
