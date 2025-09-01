@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
+import llemon.sync as llemon
+
 if TYPE_CHECKING:
-    from llemon.sync import LLM, LLMProvider
+    from llemon.sync import LLM
 
 
 class LLMProperty:
@@ -12,5 +14,5 @@ class LLMProperty:
         self.model = model
 
     def __get__(self, instance: object, owner: type) -> LLM:
-        provider = cast(type[LLMProvider], owner)
+        provider = cast(type[llemon.LLMProvider], owner)
         return provider.llm(self.model)

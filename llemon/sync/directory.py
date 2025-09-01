@@ -1,9 +1,11 @@
+from __future__ import annotations
+
 import pathlib
 
-from llemon.sync.tool import Toolbox
+import llemon.sync as llemon
 
 
-class Directory(Toolbox):
+class Directory(llemon.Toolbox):
 
     def __init__(self, path: str | pathlib.Path, readonly: bool = True) -> None:
         self.path = pathlib.Path(path).absolute()

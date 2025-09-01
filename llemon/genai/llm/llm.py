@@ -1,13 +1,14 @@
 from __future__ import annotations
+
 from contextlib import asynccontextmanager
 from functools import cached_property
-from typing import TYPE_CHECKING, AsyncIterator, cast
+from typing import TYPE_CHECKING, AsyncIterator, Self, cast
 
 from pydantic import BaseModel
 
 import llemon
-from llemon.types import NS, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils import schema_to_model
+from llemon.types import NS, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument
+from llemon.utils import filtered_dict, schema_to_model
 
 if TYPE_CHECKING:
     from llemon import (
@@ -21,9 +22,10 @@ if TYPE_CHECKING:
         LLMProvider,
         LLMTokenizer,
     )
+    from llemon.objects.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
-class LLM:
+class LLM(llemon.Serializeable):
 
     def __init__(self, provider: LLMProvider, model: str, config: LLMConfig) -> None:
         self.provider = provider
@@ -49,8 +51,9 @@ class LLM:
         instructions: str | None = None,
         context: NS | None = None,
         tools: ToolsArgument = None,
-        history: History | None = None,
         render: RenderArgument = True,
+        history: HistoryArgument = None,
+        cache: bool | None = None,
     ) -> Conversation:
         return llemon.Conversation(
             llm=self,
@@ -59,6 +62,7 @@ class LLM:
             tools=tools,
             history=history,
             render=render,
+            cache=cache,
         )
 
     async def generate(
@@ -67,9 +71,9 @@ class LLM:
         message2: str | None = None,
         /,
         *,
-        history: History | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
@@ -81,19 +85,22 @@ class LLM:
         presence_penalty: float | None = None,
         repetition_penalty: float | None = None,
         top_p: float | None = None,
+        min_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
         prediction: str | None = None,
         return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> GenerateResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
         request = llemon.GenerateRequest(
             llm=self,
             user_input=user_input,
             instructions=instructions,
-            history=history,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
@@ -105,10 +112,13 @@ class LLM:
             presence_penalty=presence_penalty,
             repetition_penalty=repetition_penalty,
             top_p=top_p,
+            min_p=min_p,
             top_k=top_k,
             stop=stop,
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
+            cache=cache,
+            timeout=timeout,
         )
         async with self._standalone(request):
             return await self.provider.generate(request)
@@ -119,9 +129,9 @@ class LLM:
         message2: str | None = None,
         /,
         *,
-        history: History | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
@@ -132,19 +142,22 @@ class LLM:
         presence_penalty: float | None = None,
         repetition_penalty: float | None = None,
         top_p: float | None = None,
+        min_p: float | None = None,
         top_k: int | None = None,
         stop: list[str] | None = None,
         prediction: str | None = None,
         return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> GenerateStreamResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
         request = llemon.GenerateStreamRequest(
             llm=self,
             user_input=user_input,
             instructions=instructions,
-            history=history,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
@@ -155,10 +168,13 @@ class LLM:
             presence_penalty=presence_penalty,
             repetition_penalty=repetition_penalty,
             top_p=top_p,
+            min_p=min_p,
             top_k=top_k,
             stop=stop,
             prediction=prediction,
             return_incomplete_message=return_incomplete_message,
+            cache=cache,
+            timeout=timeout,
         )
         async with self._standalone(request):
             return await self.provider.generate_stream(request)
@@ -170,12 +186,12 @@ class LLM:
         message2: str | None = None,
         /,
         *,
-        history: History | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
-        context: NS | None = None,
-        render: RenderArgument = None,
         variants: int | None = None,
         temperature: float | None = None,
         seed: int | None = None,
@@ -183,8 +199,11 @@ class LLM:
         presence_penalty: float | None = None,
         repetition_penalty: float | None = None,
         top_p: float | None = None,
+        min_p: float | None = None,
         top_k: int | None = None,
         prediction: str | NS | T | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> GenerateObjectResponse[T]:
         if isinstance(schema, dict):
             model_class = cast(type[T], schema_to_model(schema))
@@ -196,9 +215,9 @@ class LLM:
             llm=self,
             user_input=user_input,
             instructions=instructions,
-            history=history,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
@@ -209,8 +228,11 @@ class LLM:
             presence_penalty=presence_penalty,
             repetition_penalty=repetition_penalty,
             top_p=top_p,
+            min_p=min_p,
             top_k=top_k,
             prediction=prediction,
+            cache=cache,
+            timeout=timeout,
         )
         async with self._standalone(request):
             return await self.provider.generate_object(request)
@@ -223,12 +245,14 @@ class LLM:
         *,
         reasoning: bool = False,
         null_answer: bool = True,
-        history: History | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> ClassifyResponse:
         request = llemon.ClassifyRequest(
             llm=self,
@@ -237,15 +261,37 @@ class LLM:
             user_input=user_input,
             reasoning=reasoning,
             null_answer=null_answer,
-            history=history,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
+            cache=cache,
+            timeout=timeout,
         )
         async with self._standalone(request):
             return await self.provider.classify(request)
+
+    @classmethod
+    def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
+        provider = llemon.LLMProvider.get_subclass(unpacker.get("provider", str))
+        config = unpacker.get("config", dict)
+        config.pop("model", None)
+        return cast(
+            Self,
+            provider.llm(
+                model=unpacker.get("model", str),
+                **config,
+            ),
+        )
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        return filtered_dict(
+            provider=self.provider.__class__.__name__,
+            model=self.model,
+            config=self.config._dump(refs),
+        )
 
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
         if message2 is None:

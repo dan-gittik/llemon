@@ -1,4 +1,5 @@
 from __future__ import annotations
+
 import re
 
 INDENT_AND_CONTENT = re.compile(r"^(\s*)(.*)$", flags=re.DOTALL)

@@ -12,6 +12,15 @@ _mimetypes:
     QUICKTIME: &QUICKTIME video/quicktime
     WEBM: &WEBM video/webm
 
+stt:
+  # OpenAI Models
+  whisper-1:
+    supports_timestamps: true
+  gpt-4o-mini-transcribe:
+    supports_timestamps: false
+  gpt-4o-transcribe:
+    supports_timestamps: false
+
 llm:
   # OpenAI Models
   gpt-5:
@@ -23,6 +32,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -47,6 +57,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -71,6 +82,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -93,6 +105,7 @@ llm:
     max_output_tokens: 32768
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -115,6 +128,7 @@ llm:
     max_output_tokens: 32768
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -137,6 +151,7 @@ llm:
     max_output_tokens: 32768
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -159,6 +174,7 @@ llm:
     max_output_tokens: 16384
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -181,6 +197,7 @@ llm:
     max_output_tokens: 16384
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - top_k
     supports_streaming: true
     supports_structured_output: true
@@ -207,6 +224,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -233,6 +251,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -259,6 +278,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -285,6 +305,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -311,6 +332,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -337,6 +359,7 @@ llm:
       - frequency_penalty
       - presence_penalty
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -360,6 +383,7 @@ llm:
     max_output_tokens: 65536
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -386,6 +410,7 @@ llm:
     max_output_tokens: 65536
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -412,6 +437,7 @@ llm:
     max_output_tokens: 65536
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -438,6 +464,7 @@ llm:
     max_output_tokens: 8192
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -464,6 +491,7 @@ llm:
     max_output_tokens: 8192
     unsupported_parameters:
       - repetition_penalty
+      - min_p
       - prediction
     supports_streaming: true
     supports_structured_output: true
@@ -490,7 +518,6 @@ llm:
     context_window: 128000
     max_output_tokens: 2048
     unsupported_parameters:
-      - top_k
       - prediction
     supports_streaming: true
     supports_structured_output: false
@@ -507,7 +534,6 @@ llm:
     context_window: 128000
     max_output_tokens: 2048
     unsupported_parameters:
-      - top_k
       - prediction
     supports_streaming: true
     supports_structured_output: false

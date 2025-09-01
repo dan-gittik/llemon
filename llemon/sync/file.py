@@ -7,16 +7,21 @@ import mimetypes
 import pathlib
 import re
 from functools import cached_property
+from typing import TYPE_CHECKING, Self, cast
 
-from llemon.sync.types import FilesArgument
-from llemon.utils import fetch
+import llemon.sync as llemon
+from llemon.sync.types import NS, FileArgument
+from llemon.utils import fetch, filtered_dict
+
+if TYPE_CHECKING:
+    from llemon.sync.serializeable import DumpRefs, LoadRefs, Unpacker
 
 DATA_URL_PATTERN = re.compile(r"^data:([^;]+);base64,(.*)$")
 
 log = logging.getLogger(__name__)
 
 
-class File:
+class File(llemon.Serializeable):
 
     def __init__(
         self,
@@ -38,28 +43,21 @@ class File:
         return f"<{self}>"
 
     @classmethod
-    def resolve(cls, files: FilesArgument) -> list[File]:
-        if files is None:
-            return []
-        resolved: list[File] = []
-        for file in files:
-            if isinstance(file, File):
-                resolved.append(file)
-            elif isinstance(file, str):
-                path = pathlib.Path(file)
-                if path.exists():
-                    resolved.append(cls.from_path(file))
-                else:
-                    resolved.append(cls.from_url(file))
-            elif isinstance(file, pathlib.Path):
-                resolved.append(cls.from_path(file))
-            else:
-                mimetype, data = file
-                resolved.append(cls.from_data(mimetype, data))
-        return resolved
+    def resolve(cls, file: FileArgument) -> Self:
+        if isinstance(file, File):
+            return cast(Self, file)
+        if isinstance(file, str):
+            path = pathlib.Path(file)
+            if path.exists():
+                return cls.from_path(file)
+            return cls.from_url(file)
+        if isinstance(file, pathlib.Path):
+            return cls.from_path(file)
+        mimetype, data = file
+        return cls.from_data(mimetype, data)
 
     @classmethod
-    def from_url(cls, url: str, name: str | None = None) -> File:
+    def from_url(cls, url: str, name: str | None = None) -> Self:
         if name is None:
             name = url.rsplit("/", 1)[-1]
         if match := DATA_URL_PATTERN.match(url):
@@ -73,7 +71,7 @@ class File:
         return file
 
     @classmethod
-    def from_path(cls, path: str | pathlib.Path) -> File:
+    def from_path(cls, path: str | pathlib.Path) -> Self:
         path = pathlib.Path(path).absolute()
         if not path.exists():
             raise FileNotFoundError(f"file {path} does not exist")
@@ -85,13 +83,13 @@ class File:
         return file
 
     @classmethod
-    def from_data(cls, name_or_mimetype: str, data: bytes) -> File:
+    def from_data(cls, name_or_mimetype: str, data: bytes) -> Self:
         if "/" in name_or_mimetype:
             mimetype = name_or_mimetype
             extension = mimetypes.guess_extension(mimetype)
             if not extension:
                 raise ValueError(f"unknown extension for {mimetype}")
-            name = f"<unnamed>{extension}"
+            name = f"file{extension}"
         else:
             name = name_or_mimetype
             mimetype = cls.get_mimetype(name)
@@ -144,3 +142,19 @@ class File:
             return
         log.debug("fetching %s data from %s", self, self.url)
         self.data = fetch(self.url)
+
+    @classmethod
+    def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
+        file = cls.from_url(
+            url=unpacker.get("url", str),
+            name=unpacker.get("name", str),
+        )
+        file.id = unpacker.get("id", str, None)
+        return file
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        return filtered_dict(
+            id=self.id,
+            name=self.name,
+            url=self.url,
+        )

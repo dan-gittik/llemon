@@ -1,15 +1,17 @@
 from __future__ import annotations
+
 from typing import TYPE_CHECKING
 
 import numpy as np
 from numpy.typing import NDArray
 
 import llemon
-from llemon.types import History
-from llemon.utils import Emoji
+from llemon.types import NS
+from llemon.utils import Emoji, filtered_dict
 
 if TYPE_CHECKING:
     from llemon import Embedder
+    from llemon.objects.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
 class EmbedRequest(llemon.Request):
@@ -19,9 +21,8 @@ class EmbedRequest(llemon.Request):
         *,
         embedder: Embedder,
         text: str,
-        history: History | None = None,
     ) -> None:
-        super().__init__(history=history)
+        super().__init__()
         self.embedder = embedder
         self.text = text
 
@@ -34,6 +35,23 @@ class EmbedRequest(llemon.Request):
 
     def check_supported(self) -> None:
         pass
+
+    @classmethod
+    def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
+        args = dict(
+            embedder=refs.get_embedder(unpacker.get("embedder", str)),
+            text=unpacker.get("text", str),
+        )
+        return args, {}
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        refs.add_embedder(self.embedder)
+        data = filtered_dict(
+            embedder=self.embedder.model,
+            text=self.text,
+        )
+        data.update(super()._dump(refs))
+        return data
 
 
 class EmbedResponse(llemon.Response):
@@ -55,7 +73,21 @@ class EmbedResponse(llemon.Response):
             self.embedding = np.array(embedding, dtype=np.float32)
         else:
             self.embedding = embedding
+        self.complete()
 
     def format(self, emoji: bool = True) -> str:
         embed = Emoji.EMBED if emoji else "Embedding: "
         return f"{embed}{self.embedding!r}"
+
+    def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
+        super()._restore(unpacker, refs)
+        self.embedding = np.frombuffer(unpacker.get("embedding", bytes), dtype=np.float32)
+        self.input_tokens = unpacker.get("input_tokens", int)
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        data = filtered_dict(
+            embedding=self.embedding.tobytes() if self.embedding else None,
+            input_tokens=self.input_tokens,
+        )
+        data.update(super()._dump(refs))
+        return data

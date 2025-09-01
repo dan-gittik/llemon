@@ -1,21 +1,29 @@
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .genai.configs import LLM_CONFIGS
+    from .genai.config import CONFIGS, Config
+    from .genai.embedder.embedder import Embedder
+    from .genai.embedder.embedder_property import EmbedderProperty
+    from .genai.embedder.embedder_provider import EmbedderProvider
     from .genai.llm.llm import LLM
     from .genai.llm.llm_config import LLMConfig
     from .genai.llm.llm_property import LLMProperty
     from .genai.llm.llm_provider import LLMProvider
     from .genai.llm.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
-    from .genai.embedder.embedder import Embedder
-    from .genai.embedder.embedder_property import EmbedderProperty
-    from .genai.embedder.embedder_provider import EmbedderProvider
     from .genai.provider import Provider
     from .genai.providers.anthropic import Anthropic
     from .genai.providers.deepinfra import DeepInfra
     from .genai.providers.gemini import Gemini
     from .genai.providers.ollama import Ollama
     from .genai.providers.openai import OpenAI
+    from .genai.providers.openai_embedder import OpenAIEmbedder
+    from .genai.providers.openai_llm import OpenAILLM
+    from .genai.providers.openai_stt import OpenAISTT
+    from .genai.stt.stt import STT
+    from .genai.stt.stt_config import STTConfig
+    from .genai.stt.stt_property import STTProperty
+    from .genai.stt.stt_provider import STTProvider
+    from .objects.call import Call
     from .objects.conversation import Conversation
     from .objects.file import File
     from .objects.protocol.classify import ClassifyRequest, ClassifyResponse
@@ -24,9 +32,11 @@ if TYPE_CHECKING:
     from .objects.protocol.generate_object import GenerateObjectRequest, GenerateObjectResponse
     from .objects.protocol.generate_stream import GenerateStreamRequest, GenerateStreamResponse
     from .objects.protocol.request import Request, Response
+    from .objects.protocol.transcribe import TranscribeRequest, TranscribeResponse
     from .objects.rendering import Rendering
-    from .objects.serialization import dump, load, serialization
-    from .objects.tool import Call, Tool, Toolbox
+    from .objects.serializeable import Serializeable
+    from .objects.tool import Tool
+    from .objects.toolbox import Toolbox
     from .tools.database import Database
     from .tools.directory import Directory
     from .types import Error, Warning
@@ -64,7 +74,8 @@ __getattr__ = __Importer()
 
 
 __all__ = [
-    "LLM_CONFIGS",
+    "Config",
+    "CONFIGS",
     "Provider",
     "LLM",
     "LLMConfig",
@@ -75,6 +86,13 @@ __all__ = [
     "Embedder",
     "EmbedderProperty",
     "EmbedderProvider",
+    "STT",
+    "STTConfig",
+    "STTProperty",
+    "STTProvider",
+    "OpenAILLM",
+    "OpenAISTT",
+    "OpenAIEmbedder",
     "OpenAI",
     "Anthropic",
     "Gemini",
@@ -93,14 +111,14 @@ __all__ = [
     "ClassifyResponse",
     "EmbedRequest",
     "EmbedResponse",
+    "TranscribeRequest",
+    "TranscribeResponse",
     "File",
     "Call",
     "Tool",
     "Toolbox",
     "Rendering",
-    "dump",
-    "load",
-    "serialization",
+    "Serializeable",
     "Directory",
     "Database",
     "Error",

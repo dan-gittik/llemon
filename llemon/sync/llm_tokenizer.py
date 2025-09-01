@@ -53,7 +53,7 @@ class LLMTokenizer(Superclass):
             request = llemon.GenerateObjectRequest[BaseModel](schema=schema, **args)
         else:
             request = llemon.GenerateRequest(**args)
-        if self._count is not LLMTokenizer._count:
+        if self.__class__._count is not LLMTokenizer._count:
             return self._count_tokens(request)
         return self.llm.provider.count_tokens(request)
 

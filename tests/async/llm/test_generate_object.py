@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 from pydantic import BaseModel, Field
 
-from llemon import GenerateObjectResponse, LLM
+from llemon import LLM, GenerateObjectResponse
 
 pytestmark = pytest.mark.asyncio
 

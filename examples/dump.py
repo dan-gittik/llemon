@@ -2,7 +2,7 @@ import asyncio
 import json
 import pathlib
 
-from llemon import Anthropic, Directory, Conversation, enable_logs
+from llemon import Anthropic, Gemini, Directory, Conversation, enable_logs
 
 enable_logs()
 
@@ -23,7 +23,7 @@ def get_weather(city: str) -> int:
 
 async def main():
     directory = Directory(FILES_PATH)
-    async with Anthropic.haiku35.conversation(tools=[get_weather, directory]) as conv:
+    async with Anthropic.haiku35.conversation(tools=[get_weather, directory], cache=True) as conv:
         response = await conv.generate(
             """
             Where is it hottest, in Paris, Berlin or Madrid?
@@ -38,13 +38,13 @@ async def main():
         # print(response)
         response = await conv.generate(
             """
-            Which animal is in this picture?
+            Which animal is in the attached image?
             """,
             files=[CAT_PATH],
             use_tool=False,
         )
+        # print(response)
     dump = conv.dump()
-    import pprint; pprint.pprint(dump)
     print(json.dumps(dump, indent=2))
     async with Conversation.load(dump) as conv:
         print(conv.format())

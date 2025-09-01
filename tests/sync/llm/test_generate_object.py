@@ -3,7 +3,7 @@ from typing import Any, Callable
 import pytest
 from pydantic import BaseModel, Field
 
-from llemon.sync import GenerateObjectResponse, LLM
+from llemon.sync import LLM, GenerateObjectResponse
 
 
 class Person(BaseModel):

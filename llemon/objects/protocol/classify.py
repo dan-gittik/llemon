@@ -1,13 +1,15 @@
 from __future__ import annotations
+
 from functools import cached_property
 from typing import TYPE_CHECKING, ClassVar
 
 import llemon
-from llemon.types import NS, Error, FilesArgument, History, RenderArgument, ToolsArgument
-from llemon.utils import schema_to_model, trim
+from llemon.types import NS, Error, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument
+from llemon.utils import filtered_dict, schema_to_model, trim
 
 if TYPE_CHECKING:
     from llemon import LLM, GenerateObjectRequest
+    from llemon.objects.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
 class ClassifyRequest(llemon.GenerateRequest):
@@ -19,7 +21,6 @@ class ClassifyRequest(llemon.GenerateRequest):
         self,
         *,
         llm: LLM,
-        history: History | None = None,
         question: str,
         answers: list[str] | type[bool],
         user_input: str,
@@ -27,21 +28,26 @@ class ClassifyRequest(llemon.GenerateRequest):
         null_answer: bool = True,
         context: NS | None = None,
         render: RenderArgument = None,
+        history: HistoryArgument = None,
         files: FilesArgument = None,
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
     ) -> None:
         super().__init__(
             llm=llm,
-            history=history,
             user_input=user_input,
             context=context,
             render=render,
+            history=history,
             files=files,
             tools=tools,
             use_tool=use_tool,
             temperature=0.0,
             seed=0,
+            cache=cache,
+            timeout=timeout,
         )
         if answers is bool:
             answers = self.BOOLEAN_ANSWERS
@@ -100,7 +106,27 @@ class ClassifyRequest(llemon.GenerateRequest):
             use_tool=self.use_tool,
             temperature=self.temperature,
             seed=self.seed,
+            cache=self.cache,
         )
+
+    @classmethod
+    def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
+        args, attrs = super()._restore(unpacker, refs)
+        args.update(
+            question=unpacker.get("question", str),
+            answers=unpacker.get("answers", list),
+            reasoning=unpacker.get("reasoning", bool, None),
+        )
+        return args, attrs
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        data = filtered_dict(
+            question=self.question,
+            answers=self.answers,
+            reasoning=self.reasoning,
+        )
+        data.update(super()._dump(refs))
+        return data
 
     def _prepare_instructions(self) -> str:
         if self.reasoning:
@@ -141,4 +167,16 @@ class ClassifyResponse(llemon.GenerateResponse):
         text = answer
         if reasoning:
             text = f"{text} ({reasoning})"
-        super().complete_text(text)
+        self.complete_text(text)
+
+    def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
+        super()._restore(unpacker, refs)
+        self.answer = unpacker.get("texts", list)[0]
+        self.reasoning = unpacker.get("reasoning", str, None)
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        data = filtered_dict(
+            reasoning=self.reasoning,
+        )
+        data.update(super()._dump(refs))
+        return data

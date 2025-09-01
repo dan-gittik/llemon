@@ -59,7 +59,7 @@ def test(tests: list[str]) -> None:
     options: list[str] = []
     for test in tests:
         options.extend(["-k", test])
-    _execute("pytest", "tests", "-x", "-vv", "--ff", '-n', 'auto', *options)
+    _execute("pytest", "tests", "-x", "-vv", "--ff", "-n", "auto", *options)
 
 
 @main.command()
@@ -126,28 +126,42 @@ def sync() -> None:
 
 @main.command()
 def check_signatures() -> None:
-    model_diff = {
-        "missing": {"user_input", "instructions", "model"},
+    llm_diff = {
+        "missing": {"llm", "user_input", "instructions"},
         "extra": {"message1", "message2"},
     }
-    conv_diff = {
-        "missing": {"user_input", "history", "model"},
-        "extra": {"save", "message"},
+    embedder_diff = {
+        "missing": {"embedder"},
     }
-    _check_signatures("GenerateRequest.__init__", "LLMModel.generate", **model_diff)
+    conv_diff = {
+        "missing": {"llm", "embedder", "user_input", "history"},
+        "extra": {"save", "include_messages", "message"},
+    }
+    _check_signatures("LLMConfig.__init__", "LLMProvider.llm")
+    _check_signatures("Conversation.__init__", "Conversation.replace", optional={"llm"})
+    _check_signatures("GenerateRequest.__init__", "LLM.generate", **llm_diff)
     _check_signatures("GenerateRequest.__init__", "Conversation.generate", **conv_diff)
-    _check_signatures("GenerateStreamRequest.__init__", "LLMModel.generate_stream", **model_diff)
+    _check_signatures("GenerateStreamRequest.__init__", "LLM.generate_stream", **llm_diff)
     _check_signatures("GenerateStreamRequest.__init__", "Conversation.generate_stream", **conv_diff)
-    _check_signatures("GenerateObjectRequest.__init__", "LLMModel.generate_object", **model_diff)
+    _check_signatures("GenerateObjectRequest.__init__", "LLM.generate_object", **llm_diff)
     _check_signatures("GenerateObjectRequest.__init__", "Conversation.generate_object", **conv_diff)
-    _check_signatures("ClassifyRequest.__init__", "LLMModel.classify", **model_diff)
+    _check_signatures("ClassifyRequest.__init__", "LLM.classify", **llm_diff)
     _check_signatures("ClassifyRequest.__init__", "Conversation.classify", **conv_diff)
-    _check_signatures("LLMModelConfig.__init__", "LLM.model")
+    _check_signatures("EmbedRequest.__init__", "Embedder.embed", **embedder_diff)
+    _check_signatures("EmbedRequest.__init__", "Conversation.embed", **conv_diff)
 
 
-def _check_signatures(source: str, target: str, **diff: dict[str, set[str]]) -> None:
-    missing = diff.get("missing", set())
-    extra = diff.get("extra", set())
+def _check_signatures(
+    source: str,
+    target: str,
+    *,
+    missing: set[str] | None = None,
+    extra: set[str] | None = None,
+    optional: set[str] | None = None,
+) -> None:
+    missing = missing or set()
+    extra = extra or set()
+    optional = optional or set()
     source_location, source_parameters = _parse_function(source)
     target_location, target_parameters = _parse_function(target)
     rows: list[tuple[str, str]] = []
@@ -157,6 +171,9 @@ def _check_signatures(source: str, target: str, **diff: dict[str, set[str]]) -> 
                 rows.append((_param(name, source_annotation, source_default), "missing"))
             continue
         target_annotation, target_default = target_parameters[name]
+        if name in optional:
+            source_annotation = f"{source_annotation} | None"
+            source_default = None
         if target_annotation != source_annotation or target_default != source_default:
             rows.append((
                 _param(name, source_annotation, source_default),
@@ -165,7 +182,7 @@ def _check_signatures(source: str, target: str, **diff: dict[str, set[str]]) -> 
     for name, (target_annotation, target_default) in target_parameters.items():
         if name in source_parameters or name in extra:
             continue
-        rows.append(("missing", _param(target_annotation, target_default)))
+        rows.append(("missing", _param(name, target_annotation, target_default)))
     if not rows:
         console.print(f":white_check_mark: {source} matches {target}")
         return
@@ -183,8 +200,7 @@ def _parse_function(path: str) -> tuple[str, dict[str, tuple[Any, Any]]]:
     cls = getattr(llemon, class_name)
     function = getattr(cls, function_name)
     parameters: dict[str, tuple[Any, Any]] = {}
-    if function == BaseModel.__init__:
-        assert issubclass(cls, BaseModel)
+    if issubclass(cls, BaseModel):
         path = pathlib.Path(importlib.import_module(cls.__module__).__file__).relative_to(ROOT)
         line = inspect.findsource(cls)[1] + 1
         for name, field in cls.model_fields.items():
