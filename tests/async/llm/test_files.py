@@ -1,6 +1,4 @@
 import pathlib
-from functools import wraps
-from typing import Any, Callable
 
 import pytest
 
@@ -9,29 +7,12 @@ from llemon import LLM
 pytestmark = pytest.mark.asyncio
 
 
-def accepts_files(*mimetypes: str) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
-    def decorator(function: Callable[..., Any]) -> Callable[..., Any]:
-        @wraps(function)
-        async def wrapper(llm: LLM, *args: Any, **kwargs: Any) -> Any:
-            accepted_files = llm.config.accepts_files or []
-            for mimetype in mimetypes:
-                if mimetype not in accepted_files:
-                    pytest.skip(f"{llm} doesn't accept {mimetype} files")
-            return await function(llm, *args, **kwargs)
-
-        return wrapper
-
-    return decorator
-
-
-@accepts_files("image/png")
 async def test_generate_with_file(llm: LLM, example_assets: pathlib.Path) -> None:
     my_file = example_assets / "hello.png"
     response = await llm.generate("What is written in the file? Respond with the text only.", files=[my_file])
     assert response.text == "Hello, world!"
 
 
-@accepts_files("image/jpeg", "image/png")
 async def test_generate_with_multiple_files(llm: LLM, example_assets: pathlib.Path) -> None:
     cat_file = example_assets / "cat.jpg"
     dog_file = example_assets / "dog.png"
