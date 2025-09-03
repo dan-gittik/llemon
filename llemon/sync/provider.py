@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, ClassVar, Self
+from functools import wraps
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Concatenate, Self
 
 from dotenv import dotenv_values
 
 from llemon.sync.types import NS, Error
-from llemon.utils import Superclass
+from llemon.utils import Superclass, filtered_dict
+
+if TYPE_CHECKING:
+    from llemon.sync import Request
+
+
+UNNAMED_PARAMETERS = {
+    inspect.Parameter.POSITIONAL_ONLY,
+    inspect.Parameter.VAR_POSITIONAL,
+    inspect.Parameter.VAR_KEYWORD,
+}
 
 
 class Provider(Superclass):
@@ -16,6 +27,9 @@ class Provider(Superclass):
 
     def __init_subclass__(cls) -> None:
         cls.instance = None
+
+    def __init__(self) -> None:
+        self._wrappers: dict[Callable, Callable] = {}
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
@@ -58,3 +72,20 @@ class Provider(Superclass):
         if cls.instance is None:
             cls.instance = cls.create()
         return cls.instance
+
+    def with_overrides[R, **P](
+        self,
+        callable: Callable[P, R],
+    ) -> Callable[Concatenate[Request, P], R]:
+        if callable in self._wrappers:
+            return self._wrappers[callable]
+
+        @wraps(callable)
+        def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> R:
+            for key in kwargs:
+                if key in request.overrides:
+                    kwargs[key] = request.overrides[key]
+            return callable(*args, **filtered_dict(**kwargs))
+
+        self._wrappers[callable] = wrapper
+        return wrapper

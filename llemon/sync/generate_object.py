@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from functools import cached_property
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 from pydantic import BaseModel
 
@@ -62,6 +62,7 @@ class GenerateObjectRequest[T: BaseModel](llemon.GenerateRequest):
         prediction: str | NS | T | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> None:
         super().__init__(
             llm=llm,
@@ -85,6 +86,7 @@ class GenerateObjectRequest[T: BaseModel](llemon.GenerateRequest):
             prediction=self._resolve_prediction(prediction),
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         if isinstance(schema, dict):
             self.schema = cast(type[T], schema_to_model(schema))
@@ -111,10 +113,10 @@ class GenerateObjectRequest[T: BaseModel](llemon.GenerateRequest):
         return args, attrs
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = dict(
+        data = super()._dump(refs)
+        data.update(
             schema=self.schema.model_json_schema(),
         )
-        data.update(super()._dump(refs))
         return data
 
     def _resolve_prediction(self, prediction: str | NS | T | None) -> str | None:

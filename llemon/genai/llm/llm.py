@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 from functools import cached_property
-from typing import TYPE_CHECKING, AsyncIterator, Self, cast
+from typing import TYPE_CHECKING, Any, AsyncIterator, Self, cast
 
 from pydantic import BaseModel
 
@@ -92,6 +92,7 @@ class LLM(llemon.Serializeable):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
         request = llemon.GenerateRequest(
@@ -119,6 +120,7 @@ class LLM(llemon.Serializeable):
             return_incomplete_message=return_incomplete_message,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         async with self._standalone(request):
             return await self.provider.generate(request)
@@ -149,6 +151,7 @@ class LLM(llemon.Serializeable):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateStreamResponse:
         instructions, user_input = self._resolve_messages(message1, message2)
         request = llemon.GenerateStreamRequest(
@@ -175,6 +178,7 @@ class LLM(llemon.Serializeable):
             return_incomplete_message=return_incomplete_message,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         async with self._standalone(request):
             return await self.provider.generate_stream(request)
@@ -204,6 +208,7 @@ class LLM(llemon.Serializeable):
         prediction: str | NS | T | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateObjectResponse[T]:
         if isinstance(schema, dict):
             model_class = cast(type[T], schema_to_model(schema))
@@ -233,6 +238,7 @@ class LLM(llemon.Serializeable):
             prediction=prediction,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         async with self._standalone(request):
             return await self.provider.generate_object(request)
@@ -253,6 +259,7 @@ class LLM(llemon.Serializeable):
         use_tool: bool | str | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> ClassifyResponse:
         request = llemon.ClassifyRequest(
             llm=self,
@@ -269,6 +276,7 @@ class LLM(llemon.Serializeable):
             use_tool=use_tool,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         async with self._standalone(request):
             return await self.provider.classify(request)
@@ -278,13 +286,8 @@ class LLM(llemon.Serializeable):
         provider = llemon.LLMProvider.get_subclass(unpacker.get("provider", str))
         config = unpacker.get("config", dict)
         config.pop("model", None)
-        return cast(
-            Self,
-            provider.llm(
-                model=unpacker.get("model", str),
-                **config,
-            ),
-        )
+        llm = provider.llm(model=unpacker.get("model", str), **config)
+        return cast(Self, llm)
 
     def _dump(self, refs: DumpRefs) -> NS:
         return filtered_dict(

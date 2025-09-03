@@ -62,6 +62,7 @@ class Gemini(llemon.LLMProvider):
         location: str | None = None,
         version: str | None = None,
     ) -> None:
+        super().__init__()
         if sum([bool(api_key), bool(project) or bool(location)]) != 1:
             raise Error("either API key or project and location must be provided")
         options: NS = {}

@@ -28,11 +28,11 @@ log = logging.getLogger(__name__)
 
 class LLMProvider(ABC, llemon.Provider):
 
-    llms: ClassVar[dict[str, LLM]] = {}
+    llm_models: ClassVar[dict[str, LLM]] = {}
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        cls.llms = {}
+        cls.llm_models = {}
 
     @classmethod
     def llm(
@@ -55,7 +55,7 @@ class LLMProvider(ABC, llemon.Provider):
         cost_per_1m_output_tokens: float | None = None,
     ) -> LLM:
         self = cls.get()
-        if model not in self.llms:
+        if model not in self.llm_models:
             log.debug("creating model %s", model)
             config = llemon.LLMConfig(
                 model=model,
@@ -74,8 +74,8 @@ class LLMProvider(ABC, llemon.Provider):
                 cost_per_1m_cache_tokens=cost_per_1m_cache_tokens,
                 cost_per_1m_output_tokens=cost_per_1m_output_tokens,
             )
-            self.llms[model] = llemon.LLM(self, model, config)
-        return self.llms[model]
+            self.llm_models[model] = llemon.LLM(self, model, config)
+        return self.llm_models[model]
 
     @abstractmethod
     def count_tokens(self, request: GenerateRequest) -> int:

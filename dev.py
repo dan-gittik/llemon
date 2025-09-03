@@ -130,14 +130,23 @@ def check_signatures() -> None:
         "missing": {"llm", "user_input", "instructions"},
         "extra": {"message1", "message2"},
     }
+    stt_diff = {
+        "missing": {"stt"},
+    }
+    tts_diff = {
+        "missing": {"tts"},
+    }
     embedder_diff = {
         "missing": {"embedder"},
     }
     conv_diff = {
-        "missing": {"llm", "embedder", "user_input", "history"},
+        "missing": {"llm", "stt", "tts", "embedder", "user_input", "history"},
         "extra": {"save", "include_messages", "message"},
     }
     _check_signatures("LLMConfig.__init__", "LLMProvider.llm")
+    _check_signatures("STTConfig.__init__", "STTProvider.stt")
+    _check_signatures("TTSConfig.__init__", "TTSProvider.tts")
+    _check_signatures("EmbedderConfig.__init__", "EmbedderProvider.embedder")
     _check_signatures("Conversation.__init__", "Conversation.replace", optional={"llm"})
     _check_signatures("GenerateRequest.__init__", "LLM.generate", **llm_diff)
     _check_signatures("GenerateRequest.__init__", "Conversation.generate", **conv_diff)
@@ -149,6 +158,10 @@ def check_signatures() -> None:
     _check_signatures("ClassifyRequest.__init__", "Conversation.classify", **conv_diff)
     _check_signatures("EmbedRequest.__init__", "Embedder.embed", **embedder_diff)
     _check_signatures("EmbedRequest.__init__", "Conversation.embed", **conv_diff)
+    _check_signatures("TranscribeRequest.__init__", "STT.transcribe", **stt_diff)
+    _check_signatures("SynthesizeRequest.__init__", "TTS.synthesize", **tts_diff)
+    _check_signatures("TranscribeRequest.__init__", "Conversation.transcribe", **conv_diff)
+    _check_signatures("SynthesizeRequest.__init__", "Conversation.synthesize", **conv_diff)
 
 
 def _check_signatures(
@@ -275,6 +288,10 @@ def _async_to_sync(text: str, async_paths: list[pathlib.Path]) -> str:
     # async_fetch -> fetch
     # async_parallelize -> parallelize
     text = re.sub(r"([aA]sync_?|await) *", "", text)
+    # Awaitable ->
+    # Awaitable[...] -> ...
+    text = re.sub(r"Awaitable\[(.*?)\]", r"\1", text)
+    text = re.sub(r"(,\s*)?Awaitable", "", text)
     return text
 
 

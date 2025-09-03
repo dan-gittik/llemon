@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -21,8 +21,9 @@ class EmbedRequest(llemon.Request):
         *,
         embedder: Embedder,
         text: str,
+        **provider_options: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(self._overrides(embedder.provider, provider_options))
         self.embedder = embedder
         self.text = text
 
@@ -38,19 +39,22 @@ class EmbedRequest(llemon.Request):
 
     @classmethod
     def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
-        args = dict(
+        args, attrs = super()._restore(unpacker, refs)
+        args.update(
             embedder=refs.get_embedder(unpacker.get("embedder", str)),
             text=unpacker.get("text", str),
         )
-        return args, {}
+        return args, attrs
 
     def _dump(self, refs: DumpRefs) -> NS:
         refs.add_embedder(self.embedder)
-        data = filtered_dict(
-            embedder=self.embedder.model,
-            text=self.text,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                embedder=self.embedder.model,
+                text=self.text,
+            )
         )
-        data.update(super()._dump(refs))
         return data
 
 
@@ -85,9 +89,12 @@ class EmbedResponse(llemon.Response):
         self.input_tokens = unpacker.get("input_tokens", int)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            embedding=self.embedding.tobytes() if self.embedding else None,
-            input_tokens=self.input_tokens,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                embedding=self.embedding.tobytes() if self.embedding else None,
+                input_tokens=self.input_tokens,
+            )
         )
         data.update(super()._dump(refs))
         return data

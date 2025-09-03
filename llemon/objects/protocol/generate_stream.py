@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, AsyncIterator
+from typing import TYPE_CHECKING, Any, AsyncIterator
 
 import llemon
 from llemon.types import NS, Error, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument
@@ -40,6 +40,7 @@ class GenerateStreamRequest(llemon.GenerateRequest):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> None:
         super().__init__(
             llm=llm,
@@ -65,6 +66,7 @@ class GenerateStreamRequest(llemon.GenerateRequest):
             return_incomplete_message=return_incomplete_message,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
 
     def __str__(self) -> str:
@@ -114,12 +116,14 @@ class GenerateStreamResponse(llemon.GenerateResponse):
         self._ttft = unpacker.get("ttft", float)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            text=self.text,
-            chunks=self._chunks,
-            ttft=self.ttft,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                text=self.text,
+                chunks=self._chunks,
+                ttft=self.ttft,
+            )
         )
-        data.update(super()._dump(refs))
         return data
 
 

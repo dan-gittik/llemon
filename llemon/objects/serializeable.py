@@ -11,11 +11,12 @@ from llemon.types import NS, History
 from llemon.utils import Unpacker, concat
 
 if TYPE_CHECKING:
-    from llemon import LLM, STT, Embedder, File, Request, Response, Tool, Toolbox
+    from llemon import LLM, STT, TTS, Embedder, File, Request, Response, Tool, Toolbox
 
-LLMS = "llms"
-EMBEDDERS = "embedders"
-STTS = "stts"
+LLM_MODELS = "llm_models"
+EMBEDDER_MODELS = "embedder_models"
+STT_MODELS = "stt_models"
+TTS_MODELS = "tts_models"
 REQUESTS = "requests"
 RESPONSES = "responses"
 FILES = "files"
@@ -57,13 +58,16 @@ class DumpRefs:
         self.refs: NS = {}
 
     def add_llm(self, llm: LLM) -> None:
-        self._add(LLMS, llm.model, llm)
-
-    def add_embedder(self, embedder: Embedder) -> None:
-        self._add(EMBEDDERS, embedder.model, embedder)
+        self._add(LLM_MODELS, llm.model, llm)
 
     def add_stt(self, stt: STT) -> None:
-        self._add(STTS, stt.model, stt)
+        self._add(STT_MODELS, stt.model, stt)
+
+    def add_tts(self, tts: TTS) -> None:
+        self._add(TTS_MODELS, tts.model, tts)
+
+    def add_embedder(self, embedder: Embedder) -> None:
+        self._add(EMBEDDER_MODELS, embedder.model, embedder)
 
     def add_file(self, file: File) -> None:
         self._add(FILES, file.name, file)
@@ -90,14 +94,17 @@ class LoadRefs:
 
     def __init__(self, unpacker: Unpacker) -> None:
         self.llms: dict[str, LLM] = {}
-        for model, llm in unpacker.load_dict("llms", required=False):
+        for model, llm in unpacker.load_dict(LLM_MODELS, required=False):
             self.llms[model] = llemon.LLM._load(llm, self)
-        self.embedders: dict[str, Embedder] = {}
-        for model, embedder in unpacker.load_dict(EMBEDDERS, required=False):
-            self.embedders[model] = llemon.Embedder._load(embedder, self)
         self.stts: dict[str, STT] = {}
-        for model, stt in unpacker.load_dict(STTS, required=False):
+        for model, stt in unpacker.load_dict(STT_MODELS, required=False):
             self.stts[model] = llemon.STT._load(stt, self)
+        self.tts: dict[str, TTS] = {}
+        for model, tts in unpacker.load_dict(TTS_MODELS, required=False):
+            self.tts[model] = llemon.TTS._load(tts, self)
+        self.embedders: dict[str, Embedder] = {}
+        for model, embedder in unpacker.load_dict(EMBEDDER_MODELS, required=False):
+            self.embedders[model] = llemon.Embedder._load(embedder, self)
         self.files: dict[str, File] = {}
         for name, file in unpacker.load_dict(FILES, required=False):
             self.files[name] = llemon.File._load(file, self)
@@ -120,11 +127,14 @@ class LoadRefs:
     def get_llm(self, model: str) -> LLM:
         return self._get("LLM", model, self.llms)
 
+    def get_stt(self, model: str) -> STT:
+        return self._get("STT", model, self.stts)
+
+    def get_tts(self, model: str) -> TTS:
+        return self._get("TTS", model, self.tts)
+
     def get_embedder(self, model: str) -> Embedder:
         return self._get("embedder", model, self.embedders)
-
-    def get_stt(self, model: str) -> STT:
-        return self._get("stt", model, self.stts)
 
     def get_file(self, name: str) -> File:
         return self._get("file", name, self.files)

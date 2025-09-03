@@ -12,17 +12,21 @@ class Emoji:
     FILE = "📎  "
     TOOL = "🛠️  "
     EMBED = "🧩 "
-    TRANSCRIBE = "🎤 "
+    TRANSCRIBE = "✒️ "
+    SYNTHESIZE = "🎤 "
 
 
 def enable_logs(level: int = logging.DEBUG) -> None:
-    handler = RichHandler(rich_tracebacks=True)
-    handler.setLevel(level)
-    for name in logging.root.manager.loggerDict:
-        if not name.startswith(__package__.split(".")[0]):
-            continue
-        log = logging.getLogger(name)
-        log.propagate = False
-        log.setLevel(level)
-        if not any(isinstance(handler, RichHandler) for handler in log.handlers):
-            log.addHandler(handler)
+    class Logger(logging.Logger):
+
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+            if name.startswith(__package__.split(".")[0]):
+                handler = RichHandler(rich_tracebacks=True)
+                handler.setLevel(level)
+                self.propagate = False
+                self.setLevel(level)
+                if not any(isinstance(handler, RichHandler) for handler in self.handlers):
+                    self.addHandler(handler)
+
+    logging.setLoggerClass(Logger)

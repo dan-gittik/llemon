@@ -1,20 +1,22 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Self, cast
+from typing import TYPE_CHECKING, Any, Self, cast
 
 import llemon.sync as llemon
 from llemon.sync.types import NS
+from llemon.utils import filtered_dict
 
 if TYPE_CHECKING:
-    from llemon.sync import EmbedderProvider, EmbedResponse
+    from llemon.sync import EmbedderConfig, EmbedderProvider, EmbedResponse
     from llemon.sync.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
 class Embedder(llemon.Serializeable):
 
-    def __init__(self, provider: EmbedderProvider, model: str) -> None:
+    def __init__(self, provider: EmbedderProvider, model: str, config: EmbedderConfig) -> None:
         self.provider = provider
         self.model = model
+        self.config = config
 
     def __str__(self) -> str:
         return f"{self.provider}:{self.model}"
@@ -22,17 +24,21 @@ class Embedder(llemon.Serializeable):
     def __repr__(self) -> str:
         return f"<{self}>"
 
-    def embed(self, text: str) -> EmbedResponse:
-        request = llemon.EmbedRequest(embedder=self, text=text)
+    def embed(self, text: str, **provider_options: Any) -> EmbedResponse:
+        request = llemon.EmbedRequest(embedder=self, text=text, **provider_options)
         return self.provider.embed(request)
 
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         provider = llemon.EmbedderProvider.get_subclass(unpacker.get("provider", str))
-        return cast(Self, provider.embedder(model=unpacker.get("model", str)))
+        config = unpacker.get("config", dict)
+        config.pop("model", None)
+        embedder = provider.embedder(model=unpacker.get("model", str), **config)
+        return cast(Self, embedder)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        return dict(
+        return filtered_dict(
             provider=self.provider.__class__.__name__,
             model=self.model,
+            config=self.config._dump(refs),
         )

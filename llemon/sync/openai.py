@@ -33,4 +33,5 @@ class OpenAI(llemon.OpenAILLM, llemon.OpenAIEmbedder, llemon.OpenAISTT):
     default_stt = whisper
 
     def __init__(self, api_key: str) -> None:
+        super().__init__()
         self.client = openai.OpenAI(api_key=api_key)

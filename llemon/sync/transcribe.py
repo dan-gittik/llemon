@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import warnings
-from typing import TYPE_CHECKING
+from decimal import Decimal
+from functools import cached_property
+from typing import TYPE_CHECKING, Any
 
 import llemon.sync as llemon
 from llemon.sync.types import NS, FileArgument, Timestamps, Warning
@@ -19,15 +21,16 @@ class TranscribeRequest(llemon.Request):
         *,
         stt: STT,
         audio: FileArgument,
-        prompt: str | None = None,
+        instructions: str | None = None,
         language: str | None = None,
         timestamps: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> None:
-        super().__init__()
+        super().__init__(self._overrides(stt.provider, provider_options))
         self.stt = stt
         self.audio = llemon.File.resolve(audio)
-        self.prompt = prompt
+        self.instructions = instructions
         self.language = language
         self.timestamps = timestamps
         self.timeout = timeout
@@ -49,7 +52,7 @@ class TranscribeRequest(llemon.Request):
         args = filtered_dict(
             stt=refs.get_stt(unpacker.get("stt", str)),
             audio=refs.get_file(unpacker.get("audio", str)),
-            prompt=unpacker.get("prompt", str, None),
+            instructions=unpacker.get("instructions", str, None),
             language=unpacker.get("language", str, None),
             timestamps=unpacker.get("timestamps", bool, None),
             timeout=unpacker.get("timeout", float, None),
@@ -57,13 +60,15 @@ class TranscribeRequest(llemon.Request):
         return args, {}
 
     def _dump(self, refs: DumpRefs) -> NS:
+        data = super()._dump(refs)
         refs.add_stt(self.stt)
         refs.add_file(self.audio)
-        data = filtered_dict(
-            stt=self.stt.model,
-            audio=self.audio.name,
+        data.update(
+            filtered_dict(
+                stt=self.stt.model,
+                audio=self.audio.name,
+            )
         )
-        data.update(super()._dump(refs))
         return data
 
 
@@ -75,9 +80,18 @@ class TranscribeResponse(llemon.Response):
         super().__init__(request)
         self.text: str | None = None
         self.timestamps: Timestamps | None = None
+        self.input_tokens = 0
+        self.duration = 0.0
 
     def __str__(self) -> str:
         return f"{self.request.stt}: {self.text!r}"
+
+    @cached_property
+    def cost(self) -> Decimal:
+        return (
+            Decimal(self.input_tokens) * Decimal(self.request.stt.config.cost_per_1m_input_tokens or 0)
+            + Decimal(self.duration / 60.0) * Decimal(self.request.stt.config.cost_per_minute or 0)
+        ) / 1_000_000
 
     def complete_transcription(self, text: str, timestamps: Timestamps | None = None) -> None:
         self.text = text
@@ -93,9 +107,11 @@ class TranscribeResponse(llemon.Response):
         self.timestamps = unpacker.get("timestamps", list, None)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            text=self.text,
-            timestamps=self.timestamps,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                text=self.text,
+                timestamps=self.timestamps,
+            )
         )
-        data.update(super()._dump(refs))
         return data

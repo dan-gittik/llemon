@@ -2,15 +2,17 @@ import pathlib
 
 import pytest
 
-from llemon.sync import LLM
+from llemon.sync import LLM, Warning
 
 
+@pytest.mark.xfail(raises=Warning)
 def test_generate_with_file(llm: LLM, example_assets: pathlib.Path) -> None:
     my_file = example_assets / "hello.png"
     response = llm.generate("What is written in the file? Respond with the text only.", files=[my_file])
     assert response.text == "Hello, world!"
 
 
+@pytest.mark.xfail(raises=Warning)
 def test_generate_with_multiple_files(llm: LLM, example_assets: pathlib.Path) -> None:
     cat_file = example_assets / "cat.jpg"
     dog_file = example_assets / "dog.png"

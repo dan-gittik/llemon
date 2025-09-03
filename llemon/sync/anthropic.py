@@ -58,6 +58,7 @@ class Anthropic(llemon.LLMProvider):
     haiku3 = llemon.LLMProperty("claude-3-haiku-20240307")
 
     def __init__(self, api_key: str) -> None:
+        super().__init__()
         self.client = anthropic.Anthropic(api_key=api_key)
 
     def count_tokens(self, request: GenerateRequest) -> int:

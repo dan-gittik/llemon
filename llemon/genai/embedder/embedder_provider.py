@@ -19,20 +19,23 @@ log = logging.getLogger(__name__)
 
 class EmbedderProvider(ABC, llemon.Provider):
 
-    embedders: ClassVar[dict[str, Embedder]] = {}
+    embedder_models: ClassVar[dict[str, Embedder]] = {}
     default_embedder: ClassVar[EmbedderProperty | None] = None
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
-        cls.embedders = {}
+        cls.embedder_models = {}
 
     @classmethod
     def embedder(cls, model: str) -> Embedder:
         self = cls.get()
-        if model not in self.embedders:
+        if model not in self.embedder_models:
             log.debug("creating model %s", model)
-            self.embedders[model] = llemon.Embedder(self, model)
-        return self.embedders[model]
+            config = llemon.EmbedderConfig(
+                model=model,
+            )
+            self.embedder_models[model] = llemon.Embedder(self, model, config)
+        return self.embedder_models[model]
 
     @abstractmethod
     async def embed(self, request: EmbedRequest) -> EmbedResponse:

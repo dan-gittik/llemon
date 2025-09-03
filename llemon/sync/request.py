@@ -4,20 +4,24 @@ import datetime as dt
 import json
 import uuid
 from functools import cached_property
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING, Any, Self
 
 import llemon.sync as llemon
 from llemon.sync.types import NS, Error
 from llemon.utils import Superclass, filtered_dict, now
 
 if TYPE_CHECKING:
+    from llemon.sync import Provider
     from llemon.sync.serializeable import DumpRefs, LoadRefs, Unpacker
 
 
 class Request(Superclass, llemon.Serializeable):
 
-    def __init__(self) -> None:
+    def __init__(self, overrides: dict[str, Any] | None = None) -> None:
+        if overrides is None:
+            overrides = {}
         self.id = str(uuid.uuid4())
+        self.overrides = overrides
 
     def __str__(self) -> str:
         return "request"
@@ -45,12 +49,21 @@ class Request(Superclass, llemon.Serializeable):
 
     @classmethod
     def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
-        raise NotImplementedError()
+        return unpacker.get("overrides", dict, {}), {}
 
     def _dump(self, refs: DumpRefs) -> NS:
         return dict(
             type=self.__class__.__name__,
+            overrides=self.overrides,
         )
+
+    def _overrides(self, provider: Provider, provider_options: NS) -> NS:
+        prefix = f"{provider.__class__.__name__.lower()}_"
+        overrides: NS = {}
+        for key, value in provider_options.items():
+            if key.startswith(prefix):
+                overrides[key.removeprefix(prefix)] = value
+        return overrides
 
 
 class Response(Superclass, llemon.Serializeable):
@@ -113,4 +126,4 @@ class RequestError(Error):
         self.request = request
 
     def __str__(self) -> str:
-        return f"{super()}:\n{json.dumps(self.request.dump(), indent=2)}"
+        return f"{super().__str__()}:\n{json.dumps(self.request.dump(), indent=2)}"

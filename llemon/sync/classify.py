@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from functools import cached_property
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import llemon.sync as llemon
 from llemon.sync.types import NS, Error, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument
@@ -34,6 +34,7 @@ class ClassifyRequest(llemon.GenerateRequest):
         use_tool: bool | str | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> None:
         super().__init__(
             llm=llm,
@@ -48,6 +49,7 @@ class ClassifyRequest(llemon.GenerateRequest):
             seed=0,
             cache=cache,
             timeout=timeout,
+            **provider_options,
         )
         if answers is bool:
             answers = self.BOOLEAN_ANSWERS
@@ -120,12 +122,14 @@ class ClassifyRequest(llemon.GenerateRequest):
         return args, attrs
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            question=self.question,
-            answers=self.answers,
-            reasoning=self.reasoning,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                question=self.question,
+                answers=self.answers,
+                reasoning=self.reasoning,
+            )
         )
-        data.update(super()._dump(refs))
         return data
 
     def _prepare_instructions(self) -> str:
@@ -175,8 +179,10 @@ class ClassifyResponse(llemon.GenerateResponse):
         self.reasoning = unpacker.get("reasoning", str, None)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            reasoning=self.reasoning,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                reasoning=self.reasoning,
+            )
         )
-        data.update(super()._dump(refs))
         return data

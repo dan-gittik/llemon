@@ -219,11 +219,14 @@ class OpenAILLM(llemon.LLMProvider):
         if messages is None:
             messages = await self._messages(request)
         try:
-            extra_body: NS = {}
-            if request.repetition_penalty:
-                extra_body["repetition_penalty"] = request.repetition_penalty
+            extra_body = filtered_dict(
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
+                min_p=request.min_p,
+            )
             response_format = ResponseFormatJSONObject(type="json_object") if json else openai.NOT_GIVEN
-            openai_response = await self.client.chat.completions.create(
+            openai_response = await self.with_overrides(self.client.chat.completions.create)(
+                request,
                 model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
@@ -264,10 +267,13 @@ class OpenAILLM(llemon.LLMProvider):
         if messages is None:
             messages = await self._messages(request)
         try:
-            extra_body: NS = {}
-            if request.repetition_penalty:
-                extra_body["repetition_penalty"] = request.repetition_penalty
-            openai_response = await self.client.chat.completions.create(
+            extra_body = filtered_dict(
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
+                min_p=request.min_p,
+            )
+            openai_response = await self.with_overrides(self.client.chat.completions.create)(
+                request,
                 model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
@@ -331,22 +337,23 @@ class OpenAILLM(llemon.LLMProvider):
                 repetition_penalty=request.repetition_penalty,
                 min_p=request.min_p,
             )
-            openai_response = await self.client.beta.chat.completions.parse(
+            openai_response = await self.with_overrides(self.client.beta.chat.completions.parse)(
+                request,
                 model=request.llm.model,
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
-                temperature=_optional(request.temperature),
+                temperature=request.temperature,
                 max_completion_tokens=_optional(request.max_tokens),
-                n=_optional(request.variants),
-                seed=_optional(request.seed),
-                frequency_penalty=_optional(request.frequency_penalty),
-                presence_penalty=_optional(request.presence_penalty),
-                top_p=_optional(request.top_p),
-                stop=_optional(request.stop),
+                n=request.variants,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
                 extra_body=extra_body,
                 response_format=request.schema,
-                timeout=_optional(request.timeout),
+                timeout=request.timeout,
             )
         except openai.APIError as error:
             raise request.error(str(error))

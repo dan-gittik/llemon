@@ -4,7 +4,7 @@ import logging
 import warnings
 from decimal import Decimal
 from functools import cached_property
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 import llemon
 from llemon.types import NS, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument, Warning
@@ -50,7 +50,9 @@ class GenerateRequest(llemon.Request):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> None:
+        super().__init__(provider_options)
         if instructions is not None:
             instructions = trim(instructions)
         if user_input is not None:
@@ -59,7 +61,7 @@ class GenerateRequest(llemon.Request):
             context = {}
         if history is None:
             history = []
-        super().__init__()
+        super().__init__(self._overrides(llm.provider, provider_options))
         self.llm = llm
         self.instructions = instructions
         self.context = context
@@ -168,7 +170,8 @@ class GenerateRequest(llemon.Request):
 
     @classmethod
     def _restore(cls, unpacker: Unpacker, refs: LoadRefs) -> tuple[NS, NS]:
-        args = dict(
+        args, attrs = super()._restore(unpacker, refs)
+        args.update(
             llm=refs.get_llm(unpacker.get("llm", str)),
             instructions=unpacker.get("instructions", str, None),
             user_input=unpacker.get("user_input", str, None),
@@ -193,9 +196,10 @@ class GenerateRequest(llemon.Request):
             cache=unpacker.get("cache", bool, None),
             timeout=unpacker.get("timeout", float, None),
         )
-        return args, {}
+        return args, attrs
 
     def _dump(self, refs: DumpRefs) -> NS:
+        data = super()._dump(refs)
         refs.add_llm(self.llm)
         for request, response in self.history:
             refs.add_request(request)
@@ -204,32 +208,33 @@ class GenerateRequest(llemon.Request):
             refs.add_file(file)
         for tool in self.tools:
             refs.add_tool(tool)
-        data = filtered_dict(
-            llm=self.llm.model,
-            instructions=self.instructions,
-            user_input=self.user_input,
-            context=self.context or None,
-            render=self.rendering.bracket if self.rendering else None,
-            history=[request.id for request, _ in self.history],
-            files=[file.name for file in self.files],
-            tools=[tool.name for tool in self.tools],
-            use_tool=self.use_tool,
-            variants=self.variants,
-            temperature=self.temperature,
-            max_tokens=self.max_tokens,
-            seed=self.seed,
-            frequency_penalty=self.frequency_penalty,
-            presence_penalty=self.presence_penalty,
-            top_p=self.top_p,
-            min_p=self.min_p,
-            top_k=self.top_k,
-            stop=self.stop,
-            prediction=self.prediction,
-            return_incomplete_message=self.return_incomplete_message,
-            cache=self.cache,
-            timeout=self.timeout,
+        data.update(
+            filtered_dict(
+                llm=self.llm.model,
+                instructions=self.instructions,
+                user_input=self.user_input,
+                context=self.context or None,
+                render=self.rendering.bracket if self.rendering else None,
+                history=[request.id for request, _ in self.history],
+                files=[file.name for file in self.files],
+                tools=[tool.name for tool in self.tools],
+                use_tool=self.use_tool,
+                variants=self.variants,
+                temperature=self.temperature,
+                max_tokens=self.max_tokens,
+                seed=self.seed,
+                frequency_penalty=self.frequency_penalty,
+                presence_penalty=self.presence_penalty,
+                top_p=self.top_p,
+                min_p=self.min_p,
+                top_k=self.top_k,
+                stop=self.stop,
+                prediction=self.prediction,
+                return_incomplete_message=self.return_incomplete_message,
+                cache=self.cache,
+                timeout=self.timeout,
+            )
         )
-        data.update(super()._dump(refs))
         return data
 
 
@@ -303,14 +308,16 @@ class GenerateResponse(llemon.Response):
         self._selected = unpacker.get("selected", int)
 
     def _dump(self, refs: DumpRefs) -> NS:
-        data = filtered_dict(
-            calls=[call._dump(refs) for call in self.calls],
-            input_tokens=self.input_tokens,
-            cache_tokens=self.cache_tokens,
-            output_tokens=self.output_tokens,
-            reasoning_tokens=self.reasoning_tokens,
-            texts=self._texts,
-            selected=self._selected,
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                calls=[call._dump(refs) for call in self.calls],
+                input_tokens=self.input_tokens,
+                cache_tokens=self.cache_tokens,
+                output_tokens=self.output_tokens,
+                reasoning_tokens=self.reasoning_tokens,
+                texts=self._texts,
+                selected=self._selected,
+            )
         )
-        data.update(super()._dump(refs))
         return data

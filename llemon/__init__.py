@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from .genai.config import CONFIGS, Config
     from .genai.embedder.embedder import Embedder
+    from .genai.embedder.embedder_config import EmbedderConfig
     from .genai.embedder.embedder_property import EmbedderProperty
     from .genai.embedder.embedder_provider import EmbedderProvider
     from .genai.llm.llm import LLM
@@ -23,6 +24,10 @@ if TYPE_CHECKING:
     from .genai.stt.stt_config import STTConfig
     from .genai.stt.stt_property import STTProperty
     from .genai.stt.stt_provider import STTProvider
+    from .genai.tts.tts import TTS
+    from .genai.tts.tts_config import TTSConfig
+    from .genai.tts.tts_property import TTSProperty
+    from .genai.tts.tts_provider import TTSProvider
     from .objects.call import Call
     from .objects.conversation import Conversation
     from .objects.file import File
@@ -32,6 +37,7 @@ if TYPE_CHECKING:
     from .objects.protocol.generate_object import GenerateObjectRequest, GenerateObjectResponse
     from .objects.protocol.generate_stream import GenerateStreamRequest, GenerateStreamResponse
     from .objects.protocol.request import Request, Response
+    from .objects.protocol.synthesize import SynthesizeRequest, SynthesizeResponse
     from .objects.protocol.transcribe import TranscribeRequest, TranscribeResponse
     from .objects.rendering import Rendering
     from .objects.serializeable import Serializeable
@@ -83,13 +89,18 @@ __all__ = [
     "LLMProvider",
     "LLMTokenizer",
     "LLMToken",
-    "Embedder",
-    "EmbedderProperty",
-    "EmbedderProvider",
     "STT",
     "STTConfig",
     "STTProperty",
     "STTProvider",
+    "TTS",
+    "TTSConfig",
+    "TTSProperty",
+    "TTSProvider",
+    "Embedder",
+    "EmbedderProperty",
+    "EmbedderProvider",
+    "EmbedderConfig",
     "OpenAILLM",
     "OpenAISTT",
     "OpenAIEmbedder",
@@ -111,6 +122,8 @@ __all__ = [
     "ClassifyResponse",
     "EmbedRequest",
     "EmbedResponse",
+    "SynthesizeRequest",
+    "SynthesizeResponse",
     "TranscribeRequest",
     "TranscribeResponse",
     "File",

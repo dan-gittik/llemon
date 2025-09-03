@@ -4,7 +4,7 @@ import copy
 import re
 import warnings
 from types import TracebackType
-from typing import TYPE_CHECKING, Iterator, Self
+from typing import TYPE_CHECKING, Any, Iterator, Self
 
 from pydantic import BaseModel
 
@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from llemon.sync import (
         LLM,
         STT,
+        TTS,
         ClassifyResponse,
         Embedder,
         EmbedResponse,
@@ -26,6 +27,7 @@ if TYPE_CHECKING:
         GenerateStreamResponse,
         Request,
         Response,
+        SynthesizeResponse,
         TranscribeResponse,
     )
     from llemon.sync.serializeable import DumpRefs, LoadRefs, Unpacker
@@ -40,6 +42,7 @@ class Conversation(llemon.Serializeable):
         *,
         llm: LLM,
         stt: STT | None = None,
+        tts: TTS | None = None,
         embedder: Embedder | None = None,
         instructions: str | None = None,
         context: NS | None = None,
@@ -57,11 +60,14 @@ class Conversation(llemon.Serializeable):
             tools = []
         if stt is None and isinstance(llm.provider, llemon.STTProvider):
             stt = llm.provider.default_stt
+        if tts is None and isinstance(llm.provider, llemon.TTSProvider):
+            tts = llm.provider.default_tts
         if embedder is None and isinstance(llm.provider, llemon.EmbedderProvider):
             embedder = llm.provider.default_embedder
         self.finished = False
         self.llm = llm
         self.stt = stt
+        self.tts = tts
         self.embedder = embedder
         self.instructions = instructions
         self.context = context
@@ -113,6 +119,7 @@ class Conversation(llemon.Serializeable):
         self,
         llm: LLM | None = None,
         stt: STT | None = None,
+        tts: TTS | None = None,
         embedder: Embedder | None = None,
         instructions: str | None = None,
         context: NS | None = None,
@@ -125,6 +132,7 @@ class Conversation(llemon.Serializeable):
         return self.__class__(
             llm=llm or self.llm,
             stt=stt or self.stt,
+            tts=tts or self.tts,
             embedder=embedder or self.embedder,
             instructions=instructions or self.instructions,
             context=context or self.context.copy(),
@@ -193,6 +201,7 @@ class Conversation(llemon.Serializeable):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateResponse:
         self._assert_not_finished()
         request = llemon.GenerateRequest(
@@ -220,6 +229,7 @@ class Conversation(llemon.Serializeable):
             return_incomplete_message=return_incomplete_message,
             cache=cache if cache is not None else self.cache,
             timeout=timeout,
+            **provider_options,
         )
         self.llm.provider.prepare_generation(request, self._state)
         response = self.llm.provider.generate(request)
@@ -253,6 +263,7 @@ class Conversation(llemon.Serializeable):
         return_incomplete_message: bool | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateStreamResponse:
         self._assert_not_finished()
         request = llemon.GenerateStreamRequest(
@@ -279,6 +290,7 @@ class Conversation(llemon.Serializeable):
             return_incomplete_message=return_incomplete_message,
             cache=cache if cache is not None else self.cache,
             timeout=timeout,
+            **provider_options,
         )
         self.llm.provider.prepare_generation(request, self._state)
         response = self.llm.provider.generate_stream(request)
@@ -311,6 +323,7 @@ class Conversation(llemon.Serializeable):
         prediction: str | NS | T | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> GenerateObjectResponse[T]:
         self._assert_not_finished()
         request = llemon.GenerateObjectRequest(
@@ -336,6 +349,7 @@ class Conversation(llemon.Serializeable):
             prediction=prediction,
             cache=cache if cache is not None else self.cache,
             timeout=timeout,
+            **provider_options,
         )
         self.llm.provider.prepare_generation(request, self._state)
         response = self.llm.provider.generate_object(request)
@@ -360,6 +374,7 @@ class Conversation(llemon.Serializeable):
         use_tool: bool | str | None = None,
         cache: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> ClassifyResponse:
         self._assert_not_finished()
         request = llemon.ClassifyRequest(
@@ -377,6 +392,7 @@ class Conversation(llemon.Serializeable):
             use_tool=use_tool,
             cache=cache if cache is not None else self.cache,
             timeout=timeout,
+            **provider_options,
         )
         self.llm.provider.prepare_generation(request, self._state)
         response = self.llm.provider.classify(request)
@@ -384,11 +400,20 @@ class Conversation(llemon.Serializeable):
             self.history.append((request, response))
         return response
 
-    def embed(self, text: str, save: bool = True) -> EmbedResponse:
+    def embed(
+        self,
+        text: str,
+        save: bool = True,
+        **provider_options: Any,
+    ) -> EmbedResponse:
         self._assert_not_finished()
         if not self.embedder:
             raise Error(f"{self!r} has no embedder associated with it")
-        request = llemon.EmbedRequest(embedder=self.embedder, text=text)
+        request = llemon.EmbedRequest(
+            embedder=self.embedder,
+            text=text,
+            **provider_options,
+        )
         response = self.embedder.provider.embed(request)
         if save:
             self.history.append((request, response))
@@ -398,10 +423,11 @@ class Conversation(llemon.Serializeable):
         self,
         audio: FileArgument,
         save: bool = True,
-        prompt: str | None = None,
+        instructions: str | None = None,
         language: str | None = None,
         timestamps: bool | None = None,
         timeout: float | None = None,
+        **provider_options: Any,
     ) -> TranscribeResponse:
         self._assert_not_finished()
         if not self.stt:
@@ -409,12 +435,42 @@ class Conversation(llemon.Serializeable):
         request = llemon.TranscribeRequest(
             stt=self.stt,
             audio=audio,
-            prompt=prompt,
+            instructions=instructions,
             language=language,
             timestamps=timestamps,
             timeout=timeout,
+            **provider_options,
         )
         response = self.stt.provider.transcribe(request)
+        if save:
+            self.history.append((request, response))
+        return response
+
+    def synthesize(
+        self,
+        text: str,
+        save: bool = True,
+        voice: str | None = None,
+        output_format: str | None = None,
+        instructions: str | None = None,
+        timestamps: bool | None = None,
+        timeout: float | None = None,
+        **provider_options: Any,
+    ) -> SynthesizeResponse:
+        self._assert_not_finished()
+        if not self.tts:
+            raise Error(f"{self!r} has no TTS associated with it")
+        request = llemon.SynthesizeRequest(
+            tts=self.tts,
+            text=text,
+            voice=voice,
+            output_format=output_format,
+            instructions=instructions,
+            timestamps=timestamps,
+            timeout=timeout,
+            **provider_options,
+        )
+        response = self.tts.provider.synthesize(request)
         if save:
             self.history.append((request, response))
         return response
@@ -423,9 +479,11 @@ class Conversation(llemon.Serializeable):
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         embedder_model = unpacker.get("embedder", str, None)
         stt_model = unpacker.get("stt", str, None)
+        tts_model = unpacker.get("tts", str, None)
         return cls(
             llm=refs.get_llm(unpacker.get("llm", str)),
             stt=refs.get_stt(stt_model) if stt_model else None,
+            tts=refs.get_tts(tts_model) if tts_model else None,
             embedder=refs.get_embedder(embedder_model) if embedder_model else None,
             instructions=unpacker.get("instructions", str, None),
             context=unpacker.get("context", dict, None),
@@ -440,6 +498,8 @@ class Conversation(llemon.Serializeable):
         refs.add_llm(self.llm)
         if self.stt:
             refs.add_stt(self.stt)
+        if self.tts:
+            refs.add_tts(self.tts)
         if self.embedder:
             refs.add_embedder(self.embedder)
         for request, response in self.history:

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .directory import Directory
     from .embed import EmbedRequest, EmbedResponse
     from .embedder import Embedder
+    from .embedder_config import EmbedderConfig
     from .embedder_property import EmbedderProperty
     from .embedder_provider import EmbedderProvider
     from .file import File
@@ -37,9 +38,14 @@ if TYPE_CHECKING:
     from .stt_config import STTConfig
     from .stt_property import STTProperty
     from .stt_provider import STTProvider
+    from .synthesize import SynthesizeRequest, SynthesizeResponse
     from .tool import Tool
     from .toolbox import Toolbox
     from .transcribe import TranscribeRequest, TranscribeResponse
+    from .tts import TTS
+    from .tts_config import TTSConfig
+    from .tts_property import TTSProperty
+    from .tts_provider import TTSProvider
     from .types import Error, Warning
 
 
@@ -83,13 +89,18 @@ __all__ = [
     "LLMProvider",
     "LLMTokenizer",
     "LLMToken",
-    "Embedder",
-    "EmbedderProperty",
-    "EmbedderProvider",
     "STT",
     "STTConfig",
     "STTProperty",
     "STTProvider",
+    "TTS",
+    "TTSConfig",
+    "TTSProperty",
+    "TTSProvider",
+    "Embedder",
+    "EmbedderProperty",
+    "EmbedderProvider",
+    "EmbedderConfig",
     "OpenAILLM",
     "OpenAISTT",
     "OpenAIEmbedder",
@@ -111,6 +122,8 @@ __all__ = [
     "ClassifyResponse",
     "EmbedRequest",
     "EmbedResponse",
+    "SynthesizeRequest",
+    "SynthesizeResponse",
     "TranscribeRequest",
     "TranscribeResponse",
     "File",
