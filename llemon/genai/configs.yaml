@@ -12,12 +12,6 @@ _mimetypes:
     QUICKTIME: &QUICKTIME video/quicktime
     WEBM: &WEBM video/webm
 
-embedder:
-  # OpenAI Models
-  text-embedding-ada-002:
-  text-embedding-3-large:
-  text-embedding-3-small:
-
 stt:
   # OpenAI Models
   whisper-1:
@@ -47,6 +41,15 @@ tts:
     supports_timestamps: false
     cost_per_1m_characters: 0.0
     cost_per_1m_tokens: 12.0
+
+embedder:
+  # OpenAI Models
+  text-embedding-ada-002:
+    cost_per_1m_tokens: 0.02
+  text-embedding-3-large:
+    cost_per_1m_tokens: 0.13
+  text-embedding-3-small:
+    cost_per_1m_tokens: 0.1
 
 llm:
   # OpenAI Models

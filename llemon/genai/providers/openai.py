@@ -8,7 +8,7 @@ FILE_IDS = "openai.file_ids"
 FILE_HASHES = "openai.file_hashes"
 
 
-class OpenAI(llemon.OpenAILLM, llemon.OpenAIEmbedder, llemon.OpenAISTT):
+class OpenAI(llemon.OpenAILLM, llemon.OpenAISTT, llemon.OpenAITTS, llemon.OpenAIEmbedder):
 
     gpt5 = llemon.LLMProperty("gpt-5")
     gpt5_mini = llemon.LLMProperty("gpt-5-mini")
@@ -31,6 +31,11 @@ class OpenAI(llemon.OpenAILLM, llemon.OpenAIEmbedder, llemon.OpenAISTT):
     gpt4o_transcribe = llemon.STTProperty("gpt-4o-transcribe")
     gpt4o_mini_transcribe = llemon.STTProperty("gpt-4o-mini-transcribe")
     default_stt = whisper
+
+    tts1 = llemon.TTSProperty("tts-1")
+    tts1_hd = llemon.TTSProperty("tts-1-hd")
+    gpt4o_mini_tts = llemon.TTSProperty("gpt-4o-mini-tts")
+    default_tts = tts1
 
     def __init__(self, api_key: str) -> None:
         super().__init__()

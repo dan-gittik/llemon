@@ -13,9 +13,8 @@ async def main():
     models = [OpenAI.gpt5_nano]
     for model in models:
         async with model.conversation() as conv:
-            response = await conv.transcribe(FILES_PATH / "audio_input.mp3", timestamps=True)
-            print(response.text)
-            print(response.timestamps)
+            response = await conv.synthesize("Hello, my name is Alice.")
+            response.audio.save(FILES_PATH / "audio_output.mp3")
             # print(response)
         data = conv.dump()
         print(json.dumps(data, indent=2))

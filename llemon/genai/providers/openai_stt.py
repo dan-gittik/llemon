@@ -24,9 +24,9 @@ class OpenAISTT(llemon.STTProvider):
                 request,
                 model=request.stt.model,
                 file=(request.audio.name, request.audio.data, request.audio.mimetype),
-                prompt=_optional(request.instructions),
-                language=_optional(request.language),
-                timeout=_optional(request.timeout),
+                prompt=request.instructions,
+                language=request.language,
+                timeout=request.timeout,
                 response_format="verbose_json" if request.timestamps else openai.NOT_GIVEN,  # type: ignore
                 timestamp_granularities=["word"] if request.timestamps else openai.NOT_GIVEN,
             )
@@ -39,15 +39,11 @@ class OpenAISTT(llemon.STTProvider):
             if openai_response.usage:
                 response.duration = openai_response.usage.seconds
         else:
+            timestamps = None
             if openai_response.usage:
                 if openai_response.usage.type == "tokens":
                     response.input_tokens = openai_response.usage.input_tokens
                 elif openai_response.usage.type == "duration":
                     response.duration = openai_response.usage.seconds
-                timestamps = None
         response.complete_transcription(openai_response.text, timestamps)
         return response
-
-
-def _optional[T](value: T | None) -> T | openai.NotGiven:
-    return value if value is not None else openai.NOT_GIVEN

@@ -94,10 +94,9 @@ class SynthesizeResponse(llemon.Response):
 
     @cached_property
     def cost(self) -> Decimal:
-        return (
-            Decimal(len(self.request.text)) * Decimal(self.request.tts.config.cost_per_1m_characters or 0)
-            + Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens or 0)
-        ) / 1_000_000
+        if self.request.tts.config.cost_per_1m_characters:
+            return Decimal(len(self.request.text)) * Decimal(self.request.tts.config.cost_per_1m_characters) / 1_000_000
+        return Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens) / 1_000_000
 
     def complete_synthesis(self, audio: File, timestamps: Timestamps | None = None) -> None:
         self.audio = audio

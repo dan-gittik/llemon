@@ -27,12 +27,17 @@ class EmbedderProvider(ABC, llemon.Provider):
         cls.embedder_models = {}
 
     @classmethod
-    def embedder(cls, model: str) -> Embedder:
+    def embedder(
+        cls,
+        model: str,
+        cost_per_1m_tokens: float | None = None,
+    ) -> Embedder:
         self = cls.get()
         if model not in self.embedder_models:
             log.debug("creating model %s", model)
             config = llemon.EmbedderConfig(
                 model=model,
+                cost_per_1m_tokens=cost_per_1m_tokens,
             )
             self.embedder_models[model] = llemon.Embedder(self, model, config)
         return self.embedder_models[model]

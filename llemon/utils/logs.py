@@ -12,7 +12,7 @@ class Emoji:
     FILE = "📎  "
     TOOL = "🛠️  "
     EMBED = "🧩 "
-    TRANSCRIBE = "✒️ "
+    TRANSCRIBE = "✒️  "
     SYNTHESIZE = "🎤 "
 
 

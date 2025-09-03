@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .genai.providers.openai_embedder import OpenAIEmbedder
     from .genai.providers.openai_llm import OpenAILLM
     from .genai.providers.openai_stt import OpenAISTT
+    from .genai.providers.openai_tts import OpenAITTS
     from .genai.stt.stt import STT
     from .genai.stt.stt_config import STTConfig
     from .genai.stt.stt_property import STTProperty
@@ -103,6 +104,7 @@ __all__ = [
     "EmbedderConfig",
     "OpenAILLM",
     "OpenAISTT",
+    "OpenAITTS",
     "OpenAIEmbedder",
     "OpenAI",
     "Anthropic",

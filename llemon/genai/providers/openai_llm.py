@@ -231,18 +231,18 @@ class OpenAILLM(llemon.LLMProvider):
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
-                temperature=_optional(request.temperature),
-                max_completion_tokens=_optional(request.max_tokens),
-                n=_optional(request.variants),
-                seed=_optional(request.seed),
-                frequency_penalty=_optional(request.frequency_penalty),
-                presence_penalty=_optional(request.presence_penalty),
-                top_p=_optional(request.top_p),
-                stop=_optional(request.stop),
+                temperature=request.temperature,
+                max_completion_tokens=request.max_tokens,
+                n=request.variants,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
                 extra_body=extra_body,
                 response_format=response_format,
                 logit_bias=logit_bias,
-                timeout=_optional(request.timeout),
+                timeout=request.timeout,
             )
         except openai.APIError as error:
             raise request.error(str(error))
@@ -278,17 +278,17 @@ class OpenAILLM(llemon.LLMProvider):
                 messages=messages,
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
-                temperature=_optional(request.temperature),
-                max_completion_tokens=_optional(request.max_tokens),
-                seed=_optional(request.seed),
-                frequency_penalty=_optional(request.frequency_penalty),
-                presence_penalty=_optional(request.presence_penalty),
-                top_p=_optional(request.top_p),
-                stop=_optional(request.stop),
+                temperature=request.temperature,
+                max_completion_tokens=request.max_tokens,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
                 extra_body=extra_body,
                 stream=True,
                 stream_options={"include_usage": True},
-                timeout=_optional(request.timeout),
+                timeout=request.timeout,
             )
         except openai.APIError as error:
             raise request.error(str(error))
@@ -344,7 +344,7 @@ class OpenAILLM(llemon.LLMProvider):
                 tools=self._tools(request),
                 tool_choice=self._tool_choice(request),
                 temperature=request.temperature,
-                max_completion_tokens=_optional(request.max_tokens),
+                max_completion_tokens=request.max_tokens,
                 n=request.variants,
                 seed=request.seed,
                 frequency_penalty=request.frequency_penalty,
@@ -530,7 +530,3 @@ class OpenAILLM(llemon.LLMProvider):
             reasoning_tokens = usage.completion_tokens_details.reasoning_tokens or 0
             response.output_tokens -= reasoning_tokens
             response.reasoning_tokens += reasoning_tokens
-
-
-def _optional[T](value: T | None) -> T | openai.NotGiven:
-    return value if value is not None else openai.NOT_GIVEN

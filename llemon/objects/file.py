@@ -142,6 +142,10 @@ class File(llemon.Serializeable):
             return
         log.debug("fetching %s data from %s", self, self.url)
         self.data = await async_fetch(self.url)
+    
+    def save(self, path: str | pathlib.Path) -> None:
+        path = pathlib.Path(path).absolute()
+        path.write_bytes(self.data)
 
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
