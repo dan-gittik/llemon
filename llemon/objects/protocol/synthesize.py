@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import llemon
 from llemon.types import NS, Timestamps, Warning
-from llemon.utils import Emoji, filtered_dict
+from llemon.utils import Emoji, filtered_dict, get_extension, text_to_name
 
 if TYPE_CHECKING:
     from llemon import TTS, File
@@ -96,10 +96,11 @@ class SynthesizeResponse(llemon.Response):
     def cost(self) -> Decimal:
         if self.request.tts.config.cost_per_1m_characters:
             return Decimal(len(self.request.text)) * Decimal(self.request.tts.config.cost_per_1m_characters) / 1_000_000
-        return Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens) / 1_000_000
+        return Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens or 0) / 1_000_000
 
-    def complete_synthesis(self, audio: File, timestamps: Timestamps | None = None) -> None:
-        self.audio = audio
+    def complete_synthesis(self, data: bytes, mimetype: str, timestamps: Timestamps | None = None) -> None:
+        name = text_to_name(self.request.text, max_length=100, default="synthesis") + get_extension(mimetype)
+        self.audio = llemon.File.from_data(data, mimetype, name)
         self.timestamps = timestamps
         self.complete()
 

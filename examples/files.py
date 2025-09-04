@@ -19,7 +19,7 @@ async def main():
             # print(response)
             response = await conv.generate("What about this one?", files=[DOG_URL])
             # print(response)
-            response = await conv.generate("What about this one?", files=[("image/jpeg", CAT_PATH.read_bytes())])
+            response = await conv.generate("What about this one?", files=[(CAT_PATH.read_bytes(), "image/jpeg")])
             # print(response)
             response = await conv.generate("what does this file say?", files=[str(HELLO_PATH)])
             # print(response)

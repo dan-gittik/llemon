@@ -49,14 +49,14 @@ class TTS(llemon.Serializeable):
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         provider = llemon.TTSProvider.get_subclass(unpacker.get("provider", str))
-        config = unpacker.get("config", dict)
-        config.pop("model", None)
-        tts = provider.tts(model=unpacker.get("model", str), **config)
+        tts = provider.tts(model=unpacker.get("model", str), **unpacker.get("config", dict, {}))
         return cast(Self, tts)
 
     def _dump(self, refs: DumpRefs) -> NS:
+        config = self.config._dump(refs)
+        del config["model"]
         return filtered_dict(
             provider=self.provider.__class__.__name__,
             model=self.model,
-            config=self.config._dump(refs),
+            config=config,
         )

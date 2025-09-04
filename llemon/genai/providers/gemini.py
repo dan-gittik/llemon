@@ -177,7 +177,6 @@ class Gemini(llemon.LLMProvider):
                 parts.append(Part.from_text(text=text))
             for file in files:
                 await file.fetch()
-                assert file.data is not None
                 part = Part.from_bytes(data=file.data, mime_type=file.mimetype)
                 parts.append(part)
         else:

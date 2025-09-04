@@ -24,8 +24,8 @@ class OpenAITTS(llemon.TTSProvider):
                 model=request.tts.model,
                 input=request.text,
                 voice=request.voice or self.default_voice,
-                response_format=request.output_format,
-                instructions=request.instructions,
+                response_format=request.output_format,  # type: ignore
+                instructions=request.instructions or openai.NOT_GIVEN,
                 timeout=request.timeout,
             )
         except openai.APIError as error:
@@ -33,5 +33,5 @@ class OpenAITTS(llemon.TTSProvider):
         request.id = openai_response.response.headers["x-request-id"]
         data = await openai_response.aread()
         mimetype = openai_response.response.headers["content-type"]
-        response.complete_synthesis(llemon.File.from_data(mimetype, data))
+        response.complete_synthesis(data, mimetype)
         return response

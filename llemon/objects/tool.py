@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import importlib
-import secrets
 from typing import TYPE_CHECKING, Any, Callable, NoReturn, Self
 
 import llemon
 from llemon.types import NS, ToolsArgument
-from llemon.utils import filtered_dict, parse_parameters, trim
+from llemon.utils import filtered_dict, parse_parameters, random_suffix, trim
 
 if TYPE_CHECKING:
     from llemon import Toolbox
@@ -40,10 +39,6 @@ class Tool(llemon.Serializeable):
         return f"<{self}>"
 
     @classmethod
-    def suffix(cls) -> str:
-        return f"__{secrets.token_hex(8)}"
-
-    @classmethod
     def resolve(cls, tools: ToolsArgument) -> list[Tool | Toolbox]:
         if tools is None:
             return []
@@ -59,7 +54,7 @@ class Tool(llemon.Serializeable):
     def from_function(cls, function: Callable[..., Any]) -> Tool:
         parameters = parse_parameters(function)
         return cls(
-            name=function.__name__ + cls.suffix(),
+            name=function.__name__ + random_suffix(),
             description=trim(function.__doc__ or ""),
             parameters=parameters,
             function=function,

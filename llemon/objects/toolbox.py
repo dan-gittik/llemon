@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Callable, ClassVar, Self
 
 import llemon
 from llemon.types import NS
-from llemon.utils import Superclass, filtered_dict, parse_parameters
+from llemon.utils import Superclass, filtered_dict, parse_parameters, random_suffix
 
 if TYPE_CHECKING:
     from llemon import Tool
@@ -20,7 +20,7 @@ class Toolbox(Superclass, llemon.Serializeable):
 
     def __init__(self, name: str) -> None:
         self.name = name
-        self._suffix = llemon.Tool.suffix()
+        self._suffix = random_suffix()
         self._init: dict[str, Any] = {}
 
     @property

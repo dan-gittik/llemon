@@ -103,11 +103,10 @@ class OpenAILLM(llemon.LLMProvider):
         return response
 
     async def _upload_file(self, file: File, state: NS) -> None:
-        if not file.data and file.is_image:
+        if file.is_url and file.is_image:
             log.debug("%s is an image URL; skipping", file)
             return
         await file.fetch()
-        assert file.data is not None
         hash: File | None = state.get(FILE_HASHES, {}).get(file.md5)
         if hash:
             log.debug("%s is already uploaded as %s; reusing", file, hash.id)

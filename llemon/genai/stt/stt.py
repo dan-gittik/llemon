@@ -47,14 +47,14 @@ class STT(llemon.Serializeable):
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         provider = llemon.STTProvider.get_subclass(unpacker.get("provider", str))
-        config = unpacker.get("config", dict)
-        config.pop("model", None)
-        stt = provider.stt(model=unpacker.get("model", str), **config)
+        stt = provider.stt(model=unpacker.get("model", str), **unpacker.get("config", dict, {}))
         return cast(Self, stt)
 
     def _dump(self, refs: DumpRefs) -> NS:
+        config = self.config._dump(refs)
+        del config["model"]
         return filtered_dict(
             provider=self.provider.__class__.__name__,
             model=self.model,
-            config=self.config._dump(refs),
+            config=config,
         )

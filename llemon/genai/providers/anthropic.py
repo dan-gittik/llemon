@@ -130,38 +130,38 @@ class Anthropic(llemon.LLMProvider):
         return MessageParam(role="user", content=content)
 
     def _image(self, file: File) -> ImageBlockParam:
-        if file.data:
+        if file.is_url:
             return ImageBlockParam(
                 type="image",
-                source=Base64ImageSourceParam(
-                    type="base64",
-                    data=file.base64,
-                    media_type=file.mimetype,  # type: ignore
+                source=URLImageSourceParam(
+                    type="url",
+                    url=file.url,
                 ),
             )
         return ImageBlockParam(
             type="image",
-            source=URLImageSourceParam(
-                type="url",
-                url=file.url,
+            source=Base64ImageSourceParam(
+                type="base64",
+                data=file.base64,
+                media_type=file.mimetype,  # type: ignore
             ),
         )
 
     def _document(self, file: File) -> DocumentBlockParam:
-        if file.data:
+        if file.is_url:
             return DocumentBlockParam(
                 type="document",
-                source=Base64PDFSourceParam(
-                    type="base64",
-                    data=file.base64,
-                    media_type="application/pdf",
+                source=URLPDFSourceParam(
+                    type="url",
+                    url=file.url,
                 ),
             )
         return DocumentBlockParam(
             type="document",
-            source=URLPDFSourceParam(
-                type="url",
-                url=file.url,
+            source=Base64PDFSourceParam(
+                type="base64",
+                data=file.base64,
+                media_type="application/pdf",
             ),
         )
 

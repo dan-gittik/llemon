@@ -24,8 +24,8 @@ class OpenAISTT(llemon.STTProvider):
                 request,
                 model=request.stt.model,
                 file=(request.audio.name, request.audio.data, request.audio.mimetype),
-                prompt=request.instructions,
-                language=request.language,
+                prompt=request.instructions or openai.NOT_GIVEN,
+                language=request.language or openai.NOT_GIVEN,
                 timeout=request.timeout,
                 response_format="verbose_json" if request.timestamps else openai.NOT_GIVEN,  # type: ignore
                 timestamp_granularities=["word"] if request.timestamps else openai.NOT_GIVEN,

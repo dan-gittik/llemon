@@ -284,16 +284,16 @@ class LLM(llemon.Serializeable):
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         provider = llemon.LLMProvider.get_subclass(unpacker.get("provider", str))
-        config = unpacker.get("config", dict)
-        config.pop("model", None)
-        llm = provider.llm(model=unpacker.get("model", str), **config)
+        llm = provider.llm(model=unpacker.get("model", str), **unpacker.get("config", dict, {}))
         return cast(Self, llm)
 
     def _dump(self, refs: DumpRefs) -> NS:
+        config = self.config._dump(refs)
+        del config["model"]
         return filtered_dict(
             provider=self.provider.__class__.__name__,
             model=self.model,
-            config=self.config._dump(refs),
+            config=config,
         )
 
     def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:

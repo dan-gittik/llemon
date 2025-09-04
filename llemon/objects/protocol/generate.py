@@ -165,7 +165,7 @@ class GenerateRequest(llemon.Request):
         output.append(f"{user}{self.user_input}")
         file_ = Emoji.FILE if emoji else "File: "
         for file in self.files:
-            output.append(f"{file_}{file.name}")
+            output.append(f"{file_}{file.display_name}")
         return "\n".join(output)
 
     @classmethod

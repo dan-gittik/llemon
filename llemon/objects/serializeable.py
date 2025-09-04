@@ -58,36 +58,39 @@ class DumpRefs:
         self.refs: NS = {}
 
     def add_llm(self, llm: LLM) -> None:
-        self._add(LLM_MODELS, llm.model, llm)
+        self._add(LLM_MODELS, llm.model, llm, "model")
 
     def add_stt(self, stt: STT) -> None:
-        self._add(STT_MODELS, stt.model, stt)
+        self._add(STT_MODELS, stt.model, stt, "model")
 
     def add_tts(self, tts: TTS) -> None:
-        self._add(TTS_MODELS, tts.model, tts)
+        self._add(TTS_MODELS, tts.model, tts, "model")
 
     def add_embedder(self, embedder: Embedder) -> None:
-        self._add(EMBEDDER_MODELS, embedder.model, embedder)
+        self._add(EMBEDDER_MODELS, embedder.model, embedder, "model")
 
     def add_file(self, file: File) -> None:
-        self._add(FILES, file.name, file)
+        self._add(FILES, file.name, file, "name")
 
     def add_tool(self, tool: Tool | Toolbox) -> None:
         if isinstance(tool, llemon.Tool) and tool.toolbox:
-            self._add(TOOLS, tool.toolbox.name, tool.toolbox)
+            self._add(TOOLS, tool.toolbox.name, tool.toolbox, "name")
         else:
-            self._add(TOOLS, tool.name, tool)
+            self._add(TOOLS, tool.name, tool, "name")
 
     def add_request(self, request: Request) -> None:
-        self._add(REQUESTS, request.id, request)
+        self._add(REQUESTS, request.id, request, "id")
 
     def add_response(self, response: Response) -> None:
         self._add(RESPONSES, response.request.id, response)
 
-    def _add(self, tag: str, key: str, value: Serializeable) -> None:
+    def _add(self, tag: str, key: str, value: Serializeable, key_name: str | None = None) -> None:
         values: dict[str, NS] = self.refs.setdefault(tag, {})
         if key not in values:
-            values[key] = value._dump(self)
+            data = value._dump(self)
+            if key_name:
+                data.pop(key_name, None)
+            values[key] = data
 
 
 class LoadRefs:
@@ -95,21 +98,27 @@ class LoadRefs:
     def __init__(self, unpacker: Unpacker) -> None:
         self.llms: dict[str, LLM] = {}
         for model, llm in unpacker.load_dict(LLM_MODELS, required=False):
+            llm.data["model"] = model
             self.llms[model] = llemon.LLM._load(llm, self)
         self.stts: dict[str, STT] = {}
         for model, stt in unpacker.load_dict(STT_MODELS, required=False):
+            stt.data["model"] = model
             self.stts[model] = llemon.STT._load(stt, self)
         self.tts: dict[str, TTS] = {}
         for model, tts in unpacker.load_dict(TTS_MODELS, required=False):
+            tts.data["model"] = model
             self.tts[model] = llemon.TTS._load(tts, self)
         self.embedders: dict[str, Embedder] = {}
         for model, embedder in unpacker.load_dict(EMBEDDER_MODELS, required=False):
+            embedder.data["model"] = model
             self.embedders[model] = llemon.Embedder._load(embedder, self)
         self.files: dict[str, File] = {}
         for name, file in unpacker.load_dict(FILES, required=False):
+            file.data["name"] = name
             self.files[name] = llemon.File._load(file, self)
         self.tools: dict[str, Tool | Toolbox] = {}
         for name, tool in unpacker.load_dict(TOOLS, required=False):
+            tool.data["name"] = name
             if "type" in tool.data:
                 toolbox = llemon.Toolbox._load(tool, self)
                 self.tools[name] = toolbox
@@ -121,6 +130,7 @@ class LoadRefs:
         self.responses: dict[str, Response] = {}
         responses = {request_id: response for request_id, response in unpacker.load_dict(RESPONSES)}
         for request_id, request in unpacker.load_dict(REQUESTS, required=False):
+            request.data["id"] = request_id
             self.requests[request_id] = llemon.Request._load(request, self)
             self.responses[request_id] = llemon.Response._load(responses[request_id], self)
 
@@ -154,10 +164,10 @@ class LoadRefs:
             history.append((self.get_request(request_id), self.get_response(request_id)))
         return history
 
-    def _get[T](self, label: str, name: str, data: dict[str, T]) -> T:
-        if name not in data:
-            raise ValueError(f"{label} {name!r} does not exist (available {label}s are {concat(data)})")
-        return data[name]
+    def _get[T](self, label: str, key: str, data: dict[str, T]) -> T:
+        if key not in data:
+            raise ValueError(f"{label} {key!r} does not exist (available {label}s are {concat(data)})")
+        return data[key]
 
 
 @Serializeable.serialization.serializer("date", dt.date)

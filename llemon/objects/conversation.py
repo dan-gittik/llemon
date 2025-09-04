@@ -512,6 +512,7 @@ class Conversation(llemon.Serializeable):
         return filtered_dict(
             llm=self.llm.model,
             stt=self.stt.model if self.stt else None,
+            tts=self.tts.model if self.tts else None,
             embedder=self.embedder.model if self.embedder else None,
             instructions=self.instructions,
             context=self.context,

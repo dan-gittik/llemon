@@ -8,7 +8,7 @@ if TYPE_CHECKING:
     from llemon import Call, File, Rendering, Request, Response, Tool, Toolbox
 
 type NS = dict[str, Any]
-type FileArgument = str | pathlib.Path | tuple[str, bytes] | File
+type FileArgument = str | pathlib.Path | tuple[bytes, str] | tuple[bytes, str, str] |File
 type FilesArgument = Sequence[FileArgument] | None
 type ToolsArgument = Sequence[Callable[..., Any] | Tool | Toolbox] | None
 type CallArgument = NS | Call
