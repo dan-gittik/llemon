@@ -17,7 +17,7 @@ async def main():
             files=[DOCUMENT_PATH],
         )
         # print(response)
-        conv2 = await conv.replace(model=OpenAI.gpt5_nano).prepare()
+        conv2 = await conv.replace(llm=OpenAI.gpt5_nano).prepare()
     async with conv2:
         response = await conv2.generate(
             """

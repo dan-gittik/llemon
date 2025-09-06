@@ -8,10 +8,9 @@ async def main():
     models = [OpenAI.gpt5_nano, Anthropic.haiku35, Gemini.flash2, DeepInfra.llama31_8b]
     for model in models:
         async with model.conversation("Be concise.") as conv:
-            response = await conv.generate_stream("When was Alan Turing born?")
-            async for delta in response:
-                print(delta.text, end="|")
-            print()
+            response = await conv.generate("When was Alan Turing born?", stream=True)
+            deltas = [delta async for delta in response]
+            print("|".join(deltas))
             print(response.cost, response.dump())
 
 
