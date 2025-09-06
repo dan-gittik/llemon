@@ -60,3 +60,6 @@ class TTS(llemon.Serializeable):
             model=self.model,
             config=config,
         )
+
+
+TTSModel = llemon.Model[TTS]

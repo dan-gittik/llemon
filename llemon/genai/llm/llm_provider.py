@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, cast
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING, AsyncIterator, ClassVar, cast
 
 from pydantic import BaseModel
 
@@ -19,7 +20,6 @@ if TYPE_CHECKING:
         GenerateObjectResponse,
         GenerateRequest,
         GenerateResponse,
-        GenerateStreamRequest,
         GenerateStreamResponse,
     )
 
@@ -81,31 +81,65 @@ class LLMProvider(ABC, llemon.Provider):
     async def count_tokens(self, request: GenerateRequest) -> int:
         raise NotImplementedError()
 
-    @abstractmethod
-    async def generate(self, request: GenerateRequest) -> GenerateResponse:
-        raise NotImplementedError()
+    async def prepare_generation(self, request: GenerateRequest) -> None:
+        pass
 
-    @abstractmethod
-    async def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        raise NotImplementedError()
+    async def cleanup_generation(self, state: NS) -> None:
+        pass
 
-    @abstractmethod
+    async def generate(self, request: GenerateRequest, stream: bool | None = None) -> GenerateResponse:
+        async with self._generation(request):
+            if stream:
+                response = llemon.GenerateResponse(request)
+                await self._generate(request, response)
+                return response
+            else:
+                response = llemon.GenerateStreamResponse(request)
+                await self._generate_stream(request, response)
+                return response
+
     async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        raise NotImplementedError()
+        async with self._generation(request):
+            response = llemon.GenerateObjectResponse(request)
+            await self._generate_object(request, response)
+            return response
 
     async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        response = llemon.ClassifyResponse(request)
+        async with self._generation(request):
+            response = llemon.ClassifyResponse(request)
+            await self._classify(request, response)
+            return response
+
+    @abstractmethod
+    async def _generate(self, request: GenerateRequest, response: GenerateResponse) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def _generate_stream(self, request: GenerateRequest, response: GenerateStreamResponse) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    async def _generate_object[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+    ) -> None:
+        raise NotImplementedError()
+
+    async def _classify(self, request: ClassifyRequest, response: ClassifyResponse) -> None:
         reasoning: str | None = None
         if request.llm.config.supports_objects:
             log.debug("classifying with structured output")
             generate_object_request = request.to_object_request()
-            generate_object_response = await self.generate_object(generate_object_request)
+            generate_object_response = llemon.GenerateObjectResponse(generate_object_request)
+            await self._generate_object(generate_object_request, generate_object_response)
             data = generate_object_response.object.model_dump()
             answer_num = cast(int, data["answer"])
             reasoning = data.get("reasoning")
         else:
             log.debug("classifying with generated text")
-            generate_response = await self.generate(request)
+            generate_response = llemon.GenerateResponse(request)
+            await self._generate(request, generate_response)
             if not generate_response.text.isdigit():
                 raise request.error(f"{request} answer was not a number: {generate_response.text}")
             answer_num = int(generate_response.text)
@@ -114,13 +148,16 @@ class LLMProvider(ABC, llemon.Provider):
         answer = request.answers[answer_num]
         log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
         response.complete_answer(answer, reasoning)
-        return response
 
-    async def prepare_generation(self, request: GenerateRequest, state: NS) -> None:
+    @asynccontextmanager
+    async def _generation(self, request: GenerateRequest) -> AsyncIterator[None]:
         request.check_supported()
-
-    async def cleanup_generation(self, state: NS) -> None:
-        pass
+        await self.prepare_generation(request)
+        try:
+            yield
+        finally:
+            if request.cleanup:
+                await self.cleanup_generation(request.state)
 
     def _log_history(self, history: History) -> None:
         extra = {"markup": True, "highlighter": None}

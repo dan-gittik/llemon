@@ -88,10 +88,9 @@ class TranscribeResponse(llemon.Response):
 
     @cached_property
     def cost(self) -> Decimal:
-        return (
-            Decimal(self.input_tokens) * Decimal(self.request.stt.config.cost_per_1m_input_tokens or 0)
-            + Decimal(self.duration / 60.0) * Decimal(self.request.stt.config.cost_per_minute or 0)
-        ) / 1_000_000
+        if self.request.stt.config.cost_per_1m_input_tokens:
+            return Decimal(self.input_tokens) * Decimal(self.request.stt.config.cost_per_1m_input_tokens) / 1_000_000
+        return Decimal(self.duration) / 60 * Decimal(self.request.stt.config.cost_per_minute or 0)
 
     def complete_transcription(self, text: str, timestamps: Timestamps | None = None) -> None:
         self.text = text

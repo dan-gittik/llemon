@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 ENCODINGS: dict[str, tiktoken.Encoding] = {}
 
 
-class TiktokenTokenizer(llemon.LLMTokenizer):
+class TikTokenizer(llemon.LLMTokenizer):
 
     def __init__(self, llm: LLM) -> None:
         super().__init__(llm)

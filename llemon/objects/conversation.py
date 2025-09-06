@@ -4,7 +4,7 @@ import copy
 import re
 import warnings
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator, Self
+from typing import TYPE_CHECKING, Any, Iterator, Literal, Self, overload
 
 from pydantic import BaseModel
 
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
         EmbedResponse,
         File,
         GenerateObjectResponse,
-        GenerateRequest,
         GenerateResponse,
         GenerateStreamResponse,
         Request,
@@ -176,6 +175,7 @@ class Conversation(llemon.Serializeable):
             separator = "\n"
         return separator.join(interactions)
 
+    @overload
     async def generate(
         self,
         message: str | None = None,
@@ -189,6 +189,7 @@ class Conversation(llemon.Serializeable):
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         variants: int | None = None,
+        stream: Literal[False] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
@@ -204,7 +205,70 @@ class Conversation(llemon.Serializeable):
         cache: bool | None = None,
         timeout: float | None = None,
         **provider_options: Any,
-    ) -> GenerateResponse:
+    ) -> GenerateResponse: ...
+
+    @overload
+    async def generate(
+        self,
+        message: str | None = None,
+        *,
+        save: bool = True,
+        instructions: str | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        include_messages: int | None = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        stream: Literal[True],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
+        **provider_options: Any,
+    ) -> GenerateStreamResponse: ...
+
+    async def generate(
+        self,
+        message: str | None = None,
+        *,
+        save: bool = True,
+        instructions: str | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        include_messages: int | None = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        stream: bool | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
+        **provider_options: Any,
+    ) -> GenerateResponse | GenerateStreamResponse:
         self._assert_not_finished()
         request = llemon.GenerateRequest(
             llm=self.llm,
@@ -217,6 +281,7 @@ class Conversation(llemon.Serializeable):
             tools=self._resolve_tools(tools),
             use_tool=use_tool,
             variants=variants,
+            stream=stream,
             temperature=temperature,
             max_tokens=max_tokens,
             seed=seed,
@@ -233,69 +298,8 @@ class Conversation(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        await self.llm.provider.prepare_generation(request, self._state)
-        response = await self.llm.provider.generate(request)
-        if save:
-            self.history.append((request, response))
-        return response
-
-    async def generate_stream(
-        self,
-        message: str | None = None,
-        *,
-        save: bool = True,
-        instructions: str | None = None,
-        context: NS | None = None,
-        render: RenderArgument = None,
-        include_messages: int | None = None,
-        files: FilesArgument = None,
-        tools: ToolsArgument = None,
-        use_tool: bool | str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        seed: int | None = None,
-        frequency_penalty: float | None = None,
-        presence_penalty: float | None = None,
-        repetition_penalty: float | None = None,
-        top_p: float | None = None,
-        min_p: float | None = None,
-        top_k: int | None = None,
-        stop: list[str] | None = None,
-        prediction: str | None = None,
-        return_incomplete_message: bool | None = None,
-        cache: bool | None = None,
-        timeout: float | None = None,
-        **provider_options: Any,
-    ) -> GenerateStreamResponse:
-        self._assert_not_finished()
-        request = llemon.GenerateStreamRequest(
-            llm=self.llm,
-            instructions=instructions or self.instructions,
-            user_input=message,
-            context=self._resolve_context(context),
-            render=render or self.rendering,
-            history=self._resolve_history(include_messages),
-            files=files,
-            tools=self._resolve_tools(tools),
-            use_tool=use_tool,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            seed=seed,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            repetition_penalty=repetition_penalty,
-            top_p=top_p,
-            min_p=min_p,
-            top_k=top_k,
-            stop=stop,
-            prediction=prediction,
-            return_incomplete_message=return_incomplete_message,
-            cache=cache if cache is not None else self.cache,
-            timeout=timeout,
-            **provider_options,
-        )
-        await self.llm.provider.prepare_generation(request, self._state)
-        response = await self.llm.provider.generate_stream(request)
+        self._bind(request)
+        response = await self.llm.provider.generate(request, stream=stream)
         if save:
             self.history.append((request, response))
         return response
@@ -353,7 +357,7 @@ class Conversation(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        await self.llm.provider.prepare_generation(request, self._state)
+        self._bind(request)
         response = await self.llm.provider.generate_object(request)
         if save:
             self.history.append((request, response))
@@ -396,7 +400,7 @@ class Conversation(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        await self.llm.provider.prepare_generation(request, self._state)
+        self._bind(request)
         response = await self.llm.provider.classify(request)
         if save:
             self.history.append((request, response))
@@ -416,6 +420,7 @@ class Conversation(llemon.Serializeable):
             text=text,
             **provider_options,
         )
+        self._bind(request)
         response = await self.embedder.provider.embed(request)
         if save:
             self.history.append((request, response))
@@ -443,6 +448,7 @@ class Conversation(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
+        self._bind(request)
         response = await self.stt.provider.transcribe(request)
         if save:
             self.history.append((request, response))
@@ -472,6 +478,7 @@ class Conversation(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
+        self._bind(request)
         response = await self.tts.provider.synthesize(request)
         if save:
             self.history.append((request, response))
@@ -523,6 +530,10 @@ class Conversation(llemon.Serializeable):
             cache=self.cache,
         )
 
+    def _bind(self, request: Request) -> None:
+        request.state = self._state
+        request.cleanup = False
+
     def _assert_not_finished(self) -> None:
         if self.finished:
             raise Error(f"{self!r} has already finished")
@@ -530,7 +541,7 @@ class Conversation(llemon.Serializeable):
     def _copy_history(self) -> list[tuple[Request, Response]]:
         history = []
         for request, response in self.history:
-            if isinstance(request, GenerateRequest):
+            if isinstance(request, llemon.GenerateRequest):
                 request = copy.copy(request)
                 files: list[File] = []
                 for file in request.files:

@@ -37,7 +37,6 @@ if TYPE_CHECKING:
         GenerateObjectResponse,
         GenerateRequest,
         GenerateResponse,
-        GenerateStreamRequest,
         GenerateStreamResponse,
     )
 
@@ -49,11 +48,11 @@ class Gemini(llemon.LLMProvider):
 
     default_cache_ttl: ClassVar[int] = 3600
 
-    pro25 = llemon.LLMProperty("gemini-2.5-pro")
-    flash25 = llemon.LLMProperty("gemini-2.5-flash")
-    lite25 = llemon.LLMProperty("gemini-2.5-flash-lite")
-    flash2 = llemon.LLMProperty("gemini-2.0-flash")
-    lite2 = llemon.LLMProperty("gemini-2.0-flash-lite")
+    pro25 = llemon.LLMModel("gemini-2.5-pro")
+    flash25 = llemon.LLMModel("gemini-2.5-flash")
+    lite25 = llemon.LLMModel("gemini-2.5-flash-lite")
+    flash2 = llemon.LLMModel("gemini-2.0-flash")
+    lite2 = llemon.LLMModel("gemini-2.0-flash-lite")
 
     def __init__(
         self,
@@ -81,17 +80,124 @@ class Gemini(llemon.LLMProvider):
         )
         return response.total_tokens or 0
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return self._generate(request, llemon.GenerateResponse(request))
+    def _generate(
+        self,
+        request: GenerateRequest,
+        response: GenerateResponse,
+        config: GenerateContentConfig | None = None,
+        contents: list[Content] | None = None,
+    ) -> None:
+        if config is None:
+            config = self._config(request)
+        if contents is None:
+            contents = self._contents(request)
+        try:
+            gemini_response = wait_for(
+                request.timeout,
+                self.client.models.generate_content,
+                model=request.llm.model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise request.error(str(error))
+        if gemini_response.response_id:
+            request.id = gemini_response.response_id
+        self._set_usage(response, gemini_response.usage_metadata)
+        result, is_tool = self._parse_response(request, gemini_response)
+        if is_tool:
+            self._run_tools(request, response, contents, cast(ToolCalls, result))
+            self._generate(request, response, config=config, contents=contents)
+            return
+        result = cast(list[str], result)
+        for variant in result:
+            log.debug(Emoji.ASSISTANT + "%s", variant)
+        response.complete_text(*result)
 
-    def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return self._generate_stream(request, llemon.GenerateStreamResponse(request))
+    def _generate_stream(
+        self,
+        request: GenerateRequest,
+        response: GenerateStreamResponse,
+        config: GenerateContentConfig | None = None,
+        contents: list[Content] | None = None,
+    ) -> None:
+        if config is None:
+            config = self._config(request)
+        if contents is None:
+            contents = self._contents(request)
+        try:
+            gemini_response = wait_for(
+                request.timeout,
+                self.client.models.generate_content_stream,
+                model=request.llm.model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise request.error(str(error))
 
-    def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        return self._generate_object(request, llemon.GenerateObjectResponse(request))
+        def stream() -> Iterator[str]:
+            tool_calls: ToolCalls = []
+            for chunk in gemini_response:
+                result, is_tool = self._parse_response(request, chunk)
+                if is_tool:
+                    tool_calls.extend(cast(ToolCalls, result))
+                elif result:
+                    yield cast(str, result[0])
+                if chunk.usage_metadata:
+                    if chunk.response_id:
+                        request.id = chunk.response_id
+                    self._set_usage(response, chunk.usage_metadata)
+            if tool_calls:
+                self._run_tools(request, response, contents, tool_calls)
+                self._generate_stream(request, response, config=config, contents=contents)
+                assert response.stream is not None
+                for delta in response.stream:
+                    yield delta
+            else:
+                response.complete_stream()
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
+
+        response.stream = stream()
+
+    def _generate_object[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+        config: GenerateContentConfig | None = None,
+        contents: list[Content] | None = None,
+    ) -> None:
+        if config is None:
+            config = self._config(request)
+        if contents is None:
+            contents = self._contents(request)
+        try:
+            gemini_response = wait_for(
+                request.timeout,
+                self.client.models.generate_content,
+                model=request.llm.model,
+                contents=contents,
+                config=config,
+            )
+        except Exception as error:
+            raise request.error(str(error))
+        if gemini_response.response_id:
+            request.id = gemini_response.response_id
+        self._set_usage(response, gemini_response.usage_metadata)
+        result, is_tool = self._parse_response(request, gemini_response)
+        if is_tool:
+            self._run_tools(request, response, contents, cast(ToolCalls, result))
+            self._generate_object(request, response, config=config, contents=contents)
+            return
+        result = cast(list[str], result)
+        objects = [request.schema.model_validate(json.loads(variant)) for variant in result]
+        for variant in objects:
+            log.debug(Emoji.ASSISTANT + "%s", variant)
+        response.complete_object(*objects)
 
     def _config(self, request: GenerateRequest) -> GenerateContentConfig:
-        config = GenerateContentConfig(
+        config = self.with_overrides(GenerateContentConfig)(
+            request,
             temperature=request.temperature,
             max_output_tokens=request.max_tokens,
             candidate_count=request.variants,
@@ -175,7 +281,6 @@ class Gemini(llemon.LLMProvider):
                 parts.append(Part.from_text(text=text))
             for file in files:
                 file.fetch()
-                assert file.data is not None
                 part = Part.from_bytes(data=file.data, mime_type=file.mimetype)
                 parts.append(part)
         else:
@@ -242,122 +347,6 @@ class Gemini(llemon.LLMProvider):
             )
         return ToolConfig(function_calling_config=function_config)
 
-    def _generate(
-        self,
-        request: GenerateRequest,
-        response: GenerateResponse,
-        config: GenerateContentConfig | None = None,
-        contents: list[Content] | None = None,
-    ) -> GenerateResponse:
-        if config is None:
-            config = self._config(request)
-        if contents is None:
-            contents = self._contents(request)
-        try:
-            gemini_response = wait_for(
-                request.timeout,
-                self.client.models.generate_content,
-                model=request.llm.model,
-                contents=contents,
-                config=config,
-            )
-        except Exception as error:
-            raise request.error(str(error))
-        if gemini_response.response_id:
-            request.id = gemini_response.response_id
-        self._set_usage(response, gemini_response.usage_metadata)
-        result, is_tool = self._parse_response(request, gemini_response)
-        if is_tool:
-            self._run_tools(request, response, contents, cast(ToolCalls, result))
-            return self._generate(request, response, config=config, contents=contents)
-        result = cast(list[str], result)
-        for variant in result:
-            log.debug(Emoji.ASSISTANT + "%s", variant)
-        response.complete_text(*result)
-        return response
-
-    def _generate_stream(
-        self,
-        request: GenerateStreamRequest,
-        response: GenerateStreamResponse,
-        config: GenerateContentConfig | None = None,
-        contents: list[Content] | None = None,
-    ) -> GenerateStreamResponse:
-        if config is None:
-            config = self._config(request)
-        if contents is None:
-            contents = self._contents(request)
-        try:
-            gemini_response = wait_for(
-                request.timeout,
-                self.client.models.generate_content_stream,
-                model=request.llm.model,
-                contents=contents,
-                config=config,
-            )
-        except Exception as error:
-            raise request.error(str(error))
-
-        def stream() -> Iterator[str]:
-            tool_calls: ToolCalls = []
-            for chunk in gemini_response:
-                result, is_tool = self._parse_response(request, chunk)
-                if is_tool:
-                    tool_calls.extend(cast(ToolCalls, result))
-                elif result:
-                    yield cast(str, result[0])
-                if chunk.usage_metadata:
-                    if chunk.response_id:
-                        request.id = chunk.response_id
-                    self._set_usage(response, chunk.usage_metadata)
-            if tool_calls:
-                self._run_tools(request, response, contents, tool_calls)
-                self._generate_stream(request, response, config=config, contents=contents)
-                assert response.stream is not None
-                for delta in response.stream:
-                    yield delta
-            else:
-                response.complete_stream()
-                log.debug(Emoji.ASSISTANT + "%s", response.text)
-
-        response.stream = stream()
-        return response
-
-    def _generate_object[T: BaseModel](
-        self,
-        request: GenerateObjectRequest[T],
-        response: GenerateObjectResponse[T],
-        config: GenerateContentConfig | None = None,
-        contents: list[Content] | None = None,
-    ) -> GenerateObjectResponse[T]:
-        if config is None:
-            config = self._config(request)
-        if contents is None:
-            contents = self._contents(request)
-        try:
-            gemini_response = wait_for(
-                request.timeout,
-                self.client.models.generate_content,
-                model=request.llm.model,
-                contents=contents,
-                config=config,
-            )
-        except Exception as error:
-            raise request.error(str(error))
-        if gemini_response.response_id:
-            request.id = gemini_response.response_id
-        self._set_usage(response, gemini_response.usage_metadata)
-        result, is_tool = self._parse_response(request, gemini_response)
-        if is_tool:
-            self._run_tools(request, response, contents, cast(ToolCalls, result))
-            return self._generate_object(request, response, config=config, contents=contents)
-        result = cast(list[str], result)
-        objects = [request.schema.model_validate(json.loads(variant)) for variant in result]
-        for variant in objects:
-            log.debug(Emoji.ASSISTANT + "%s", variant)
-        response.complete_object(*objects)
-        return response
-
     def _parse_response(
         self,
         request: GenerateRequest,
@@ -399,7 +388,7 @@ class Gemini(llemon.LLMProvider):
         contents: list[Content],
         tool_calls: ToolCalls,
     ) -> None:
-        calls = [Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
+        calls = [llemon.Call(id, request.tools_dict[name], args) for id, name, args in tool_calls]
         parallelize(call.run for call in calls)
         contents.append(self._tool_call(calls))
         contents.append(self._tool_results(calls))

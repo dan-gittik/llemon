@@ -14,8 +14,7 @@ class OpenAIEmbedder(llemon.EmbedderProvider):
 
     client: openai.OpenAI
 
-    def embed(self, request: EmbedRequest) -> EmbedResponse:
-        response = llemon.EmbedResponse(request)
+    def _embed(self, request: EmbedRequest, response: EmbedResponse) -> None:
         try:
             openai_response = self.client.embeddings.create(
                 model=request.embedder.model,
@@ -27,4 +26,3 @@ class OpenAIEmbedder(llemon.EmbedderProvider):
         if not openai_response.data:
             raise request.error(f"{request} has no response")
         response.complete_embedding(openai_response.data[0].embedding)
-        return response

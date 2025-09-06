@@ -2,15 +2,14 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .genai.config import CONFIGS, Config
-    from .genai.embedder.embedder import Embedder
+    from .genai.embedder.embedder import Embedder, EmbedderModel
     from .genai.embedder.embedder_config import EmbedderConfig
-    from .genai.embedder.embedder_property import EmbedderProperty
     from .genai.embedder.embedder_provider import EmbedderProvider
-    from .genai.llm.llm import LLM
+    from .genai.llm.llm import LLM, LLMModel
     from .genai.llm.llm_config import LLMConfig
-    from .genai.llm.llm_property import LLMProperty
     from .genai.llm.llm_provider import LLMProvider
     from .genai.llm.tokenizers.llm_tokenizer import LLMToken, LLMTokenizer
+    from .genai.model import Model
     from .genai.provider import Provider
     from .genai.providers.anthropic import Anthropic
     from .genai.providers.deepinfra import DeepInfra
@@ -21,22 +20,19 @@ if TYPE_CHECKING:
     from .genai.providers.openai_llm import OpenAILLM
     from .genai.providers.openai_stt import OpenAISTT
     from .genai.providers.openai_tts import OpenAITTS
-    from .genai.stt.stt import STT
+    from .genai.stt.stt import STT, STTModel
     from .genai.stt.stt_config import STTConfig
-    from .genai.stt.stt_property import STTProperty
     from .genai.stt.stt_provider import STTProvider
-    from .genai.tts.tts import TTS
+    from .genai.tts.tts import TTS, TTSModel
     from .genai.tts.tts_config import TTSConfig
-    from .genai.tts.tts_property import TTSProperty
     from .genai.tts.tts_provider import TTSProvider
     from .objects.call import Call
     from .objects.conversation import Conversation
     from .objects.file import File
     from .objects.protocol.classify import ClassifyRequest, ClassifyResponse
     from .objects.protocol.embed import EmbedRequest, EmbedResponse
-    from .objects.protocol.generate import GenerateRequest, GenerateResponse
+    from .objects.protocol.generate import GenerateRequest, GenerateResponse, GenerateStreamResponse
     from .objects.protocol.generate_object import GenerateObjectRequest, GenerateObjectResponse
-    from .objects.protocol.generate_stream import GenerateStreamRequest, GenerateStreamResponse
     from .objects.protocol.request import Request, Response
     from .objects.protocol.synthesize import SynthesizeRequest, SynthesizeResponse
     from .objects.protocol.transcribe import TranscribeRequest, TranscribeResponse
@@ -84,21 +80,26 @@ __all__ = [
     "Config",
     "CONFIGS",
     "Provider",
+    "Model",
     "LLM",
+    "LLMModel",
     "LLMConfig",
     "LLMProperty",
     "LLMProvider",
     "LLMTokenizer",
     "LLMToken",
     "STT",
+    "STTModel",
     "STTConfig",
     "STTProperty",
     "STTProvider",
     "TTS",
+    "TTSModel",
     "TTSConfig",
     "TTSProperty",
     "TTSProvider",
     "Embedder",
+    "EmbedderModel",
     "EmbedderProperty",
     "EmbedderProvider",
     "EmbedderConfig",
@@ -116,10 +117,9 @@ __all__ = [
     "Response",
     "GenerateRequest",
     "GenerateResponse",
+    "GenerateStreamResponse",
     "GenerateObjectRequest",
     "GenerateObjectResponse",
-    "GenerateStreamRequest",
-    "GenerateStreamResponse",
     "ClassifyRequest",
     "ClassifyResponse",
     "EmbedRequest",

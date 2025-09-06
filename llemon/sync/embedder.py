@@ -31,14 +31,17 @@ class Embedder(llemon.Serializeable):
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
         provider = llemon.EmbedderProvider.get_subclass(unpacker.get("provider", str))
-        config = unpacker.get("config", dict)
-        config.pop("model", None)
-        embedder = provider.embedder(model=unpacker.get("model", str), **config)
+        embedder = provider.embedder(model=unpacker.get("model", str), **unpacker.get("config", dict, {}))
         return cast(Self, embedder)
 
     def _dump(self, refs: DumpRefs) -> NS:
+        config = self.config._dump(refs)
+        del config["model"]
         return filtered_dict(
             provider=self.provider.__class__.__name__,
             model=self.model,
-            config=self.config._dump(refs),
+            config=config,
         )
+
+
+EmbedderModel = llemon.Model[Embedder]

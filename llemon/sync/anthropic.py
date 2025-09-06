@@ -38,7 +38,6 @@ if TYPE_CHECKING:
         GenerateObjectResponse,
         GenerateRequest,
         GenerateResponse,
-        GenerateStreamRequest,
         GenerateStreamResponse,
     )
 
@@ -49,13 +48,13 @@ class Anthropic(llemon.LLMProvider):
 
     default_max_tokens: ClassVar[int] = 4096
 
-    opus41 = llemon.LLMProperty("claude-opus-4-1")
-    opus4 = llemon.LLMProperty("claude-opus-4-0")
-    sonnet4 = llemon.LLMProperty("claude-sonnet-4-0")
-    sonnet37 = llemon.LLMProperty("claude-3-7-sonnet-latest")
-    sonnet35 = llemon.LLMProperty("claude-3-5-sonnet-latest")
-    haiku35 = llemon.LLMProperty("claude-3-5-haiku-latest")
-    haiku3 = llemon.LLMProperty("claude-3-haiku-20240307")
+    opus41 = llemon.LLMModel("claude-opus-4-1")
+    opus4 = llemon.LLMModel("claude-opus-4-0")
+    sonnet4 = llemon.LLMModel("claude-sonnet-4-0")
+    sonnet37 = llemon.LLMModel("claude-3-7-sonnet-latest")
+    sonnet35 = llemon.LLMModel("claude-3-5-sonnet-latest")
+    haiku35 = llemon.LLMModel("claude-3-5-haiku-latest")
+    haiku3 = llemon.LLMModel("claude-3-haiku-20240307")
 
     def __init__(self, api_key: str) -> None:
         super().__init__()
@@ -69,14 +68,169 @@ class Anthropic(llemon.LLMProvider):
         )
         return response.input_tokens
 
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return self._generate(request, llemon.GenerateResponse(request))
+    def _generate(
+        self,
+        request: GenerateRequest,
+        response: GenerateResponse,
+        messages: list[MessageParam] | None = None,
+    ) -> None:
+        if messages is None:
+            messages = self._messages(request)
+        try:
+            anthropic_response = self.with_overrides(self.client.messages.create)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
+                system=self._system(request),
+                temperature=_optional(request.temperature),
+                top_p=_optional(request.top_p),
+                top_k=_optional(request.top_k),
+                stop_sequences=_optional(request.stop),
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
+            )
+        except anthropic.APIError as error:
+            raise request.error(str(error))
+        request.id = anthropic_response.id
+        self._set_usage(response, anthropic_response.usage)
+        self._check_stop_reason(request, anthropic_response.stop_reason)
+        texts: list[str] = []
+        tools: ToolCalls = []
+        for content in anthropic_response.content:
+            if content.type == "tool_use":
+                tools.append((content.id, content.name, cast(NS, content.input)))
+            if content.type == "text":
+                texts.append(content.text)
+        if tools:
+            self._run_tools(request, response, messages, tools)
+            self._generate(request, response, messages=messages)
+            return
+        text = "".join(texts)
+        if not text:
+            raise request.error(f"{request} response has no text")
+        log.debug(Emoji.ASSISTANT + "%s", text)
+        response.complete_text(text)
 
-    def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return self._generate_stream(request, llemon.GenerateStreamResponse(request))
+    def _generate_stream(
+        self,
+        request: GenerateRequest,
+        response: GenerateStreamResponse,
+        messages: list[MessageParam] | None = None,
+    ) -> None:
+        if messages is None:
+            messages = self._messages(request)
+        try:
+            anthropic_response = self.with_overrides(self.client.messages.stream)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
+                system=self._system(request),
+                temperature=_optional(request.temperature),
+                top_p=_optional(request.top_p),
+                top_k=_optional(request.top_k),
+                stop_sequences=_optional(request.stop),
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
+            )
+        except anthropic.APIError as error:
+            raise request.error(str(error))
 
-    def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        return self._generate_object(request, llemon.GenerateObjectResponse(request))
+        def stream() -> Iterator[str]:
+            tool_stream: ToolStream = {}
+            with anthropic_response as events:
+                if events.request_id:
+                    request.id = events.request_id
+                for event in events:
+                    if event.type == "message_delta":
+                        if not event.delta.stop_reason:
+                            continue
+                        self._set_usage(response, event.usage)
+                        self._check_stop_reason(request, event.delta.stop_reason)
+                        break
+                    if event.type == "message_stop":
+                        break
+                    if event.type == "content_block_start":
+                        block = event.content_block
+                        if block.type == "tool_use":
+                            tool_stream[event.index] = block.id, block.name, []
+                    if event.type == "content_block_delta":
+                        if event.delta.type == "text_delta" and event.delta.text:
+                            yield event.delta.text
+                        if event.delta.type == "input_json_delta":
+                            tool_stream[event.index][2].append(event.delta.partial_json)
+            if tool_stream:
+                yield "\n"
+                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
+                self._run_tools(request, response, messages, tools)
+                self._generate_stream(request, response, messages=messages)
+                assert response.stream is not None
+                for delta in response.stream:
+                    yield delta
+            else:
+                response.complete_stream()
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
+
+        response.stream = stream()
+
+    def _generate_object[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+        messages: list[MessageParam] | None = None,
+    ) -> None:
+        if messages is None:
+            messages = self._messages(request)
+        tool = llemon.Tool(
+            name="structured_output",
+            description="Use this tool to output a structured object",
+            parameters=request.schema.model_json_schema(),
+        )
+        request.tools_dict[tool.compatible_name] = tool
+        request.append_instruction(
+            f"""
+            Use the {tool.compatible_name} tool to output a structured object.
+            """
+        )
+        try:
+            anthropic_response = self.with_overrides(self.client.messages.create)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
+                system=self._system(request),
+                temperature=_optional(request.temperature),
+                top_p=_optional(request.top_p),
+                top_k=_optional(request.top_k),
+                stop_sequences=_optional(request.stop),
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                timeout=_optional(request.timeout),
+            )
+        except anthropic.APIError as error:
+            raise request.error(str(error))
+        request.id = anthropic_response.id
+        self._set_usage(response, anthropic_response.usage)
+        self._check_stop_reason(request, anthropic_response.stop_reason)
+        object: NS = {}
+        tools: ToolCalls = []
+        for content in anthropic_response.content:
+            if content.type == "tool_use":
+                if content.name == tool.compatible_name:
+                    object = cast(NS, content.input)
+                else:
+                    tools.append((content.id, content.name, cast(NS, content.input)))
+        if tools:
+            self._run_tools(request, response, messages, tools)
+            self._generate_object(request, response, messages=messages)
+            return
+        if not object:
+            raise request.error(f"{request} response has no object")
+        log.debug(Emoji.ASSISTANT + "%s", object)
+        response.complete_object(request.schema.model_validate(object))
 
     def _messages(self, request: GenerateRequest) -> list[MessageParam]:
         messages: list[MessageParam] = []
@@ -130,38 +284,38 @@ class Anthropic(llemon.LLMProvider):
         return MessageParam(role="user", content=content)
 
     def _image(self, file: File) -> ImageBlockParam:
-        if file.data:
+        if file.is_url:
             return ImageBlockParam(
                 type="image",
-                source=Base64ImageSourceParam(
-                    type="base64",
-                    data=file.base64,
-                    media_type=file.mimetype,  # type: ignore
+                source=URLImageSourceParam(
+                    type="url",
+                    url=file.url,
                 ),
             )
         return ImageBlockParam(
             type="image",
-            source=URLImageSourceParam(
-                type="url",
-                url=file.url,
+            source=Base64ImageSourceParam(
+                type="base64",
+                data=file.base64,
+                media_type=file.mimetype,  # type: ignore
             ),
         )
 
     def _document(self, file: File) -> DocumentBlockParam:
-        if file.data:
+        if file.is_url:
             return DocumentBlockParam(
                 type="document",
-                source=Base64PDFSourceParam(
-                    type="base64",
-                    data=file.base64,
-                    media_type="application/pdf",
+                source=URLPDFSourceParam(
+                    type="url",
+                    url=file.url,
                 ),
             )
         return DocumentBlockParam(
             type="document",
-            source=URLPDFSourceParam(
-                type="url",
-                url=file.url,
+            source=Base64PDFSourceParam(
+                type="base64",
+                data=file.base64,
+                media_type="application/pdf",
             ),
         )
 
@@ -194,168 +348,6 @@ class Anthropic(llemon.LLMProvider):
                 for call in calls
             ],
         )
-
-    def _generate(
-        self,
-        request: GenerateRequest,
-        response: GenerateResponse,
-        messages: list[MessageParam] | None = None,
-    ) -> GenerateResponse:
-        if messages is None:
-            messages = self._messages(request)
-        try:
-            anthropic_response = self.client.messages.create(
-                model=request.llm.model,
-                messages=messages,
-                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=self._system(request),
-                temperature=_optional(request.temperature),
-                top_p=_optional(request.top_p),
-                top_k=_optional(request.top_k),
-                stop_sequences=_optional(request.stop),
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                timeout=_optional(request.timeout),
-            )
-        except anthropic.APIError as error:
-            raise request.error(str(error))
-        request.id = anthropic_response.id
-        self._set_usage(response, anthropic_response.usage)
-        self._check_stop_reason(request, anthropic_response.stop_reason)
-        texts: list[str] = []
-        tools: ToolCalls = []
-        for content in anthropic_response.content:
-            if content.type == "tool_use":
-                tools.append((content.id, content.name, cast(NS, content.input)))
-            if content.type == "text":
-                texts.append(content.text)
-        if tools:
-            self._run_tools(request, response, messages, tools)
-            return self._generate(request, response, messages=messages)
-        text = "".join(texts)
-        if not text:
-            raise request.error(f"{request} response has no text")
-        log.debug(Emoji.ASSISTANT + "%s", text)
-        response.complete_text(text)
-        return response
-
-    def _generate_stream(
-        self,
-        request: GenerateStreamRequest,
-        response: GenerateStreamResponse,
-        messages: list[MessageParam] | None = None,
-    ) -> GenerateStreamResponse:
-        if messages is None:
-            messages = self._messages(request)
-        try:
-            anthropic_response = self.client.messages.stream(
-                model=request.llm.model,
-                messages=messages,
-                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=self._system(request),
-                temperature=_optional(request.temperature),
-                top_p=_optional(request.top_p),
-                top_k=_optional(request.top_k),
-                stop_sequences=_optional(request.stop),
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                timeout=_optional(request.timeout),
-            )
-        except anthropic.APIError as error:
-            raise request.error(str(error))
-
-        def stream() -> Iterator[str]:
-            tool_stream: ToolStream = {}
-            with anthropic_response as events:
-                if events.request_id:
-                    request.id = events.request_id
-                for event in events:
-                    if event.type == "message_delta":
-                        if not event.delta.stop_reason:
-                            continue
-                        self._set_usage(response, event.usage)
-                        self._check_stop_reason(request, event.delta.stop_reason)
-                        break
-                    if event.type == "message_stop":
-                        break
-                    if event.type == "content_block_start":
-                        block = event.content_block
-                        if block.type == "tool_use":
-                            tool_stream[event.index] = block.id, block.name, []
-                    if event.type == "content_block_delta":
-                        if event.delta.type == "text_delta" and event.delta.text:
-                            yield event.delta.text
-                        if event.delta.type == "input_json_delta":
-                            tool_stream[event.index][2].append(event.delta.partial_json)
-            if tool_stream:
-                yield "\n"
-                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
-                self._run_tools(request, response, messages, tools)
-                self._generate_stream(request, response, messages=messages)
-                assert response.stream is not None
-                for delta in response.stream:
-                    yield delta
-            else:
-                response.complete_stream()
-                log.debug(Emoji.ASSISTANT + "%s", response.text)
-
-        response.stream = stream()
-        return response
-
-    def _generate_object[T: BaseModel](
-        self,
-        request: GenerateObjectRequest[T],
-        response: GenerateObjectResponse[T],
-        messages: list[MessageParam] | None = None,
-    ) -> GenerateObjectResponse[T]:
-        if messages is None:
-            messages = self._messages(request)
-        tool = llemon.Tool(
-            name="structured_output",
-            description="Use this tool to output a structured object",
-            parameters=request.schema.model_json_schema(),
-        )
-        request.tools_dict[tool.compatible_name] = tool
-        request.append_instruction(
-            f"""
-            Use the {tool.compatible_name} tool to output a structured object.
-            """
-        )
-        try:
-            anthropic_response = self.client.messages.create(
-                model=request.llm.model,
-                messages=messages,
-                max_tokens=request.max_tokens or request.llm.config.max_output_tokens or self.default_max_tokens,
-                system=self._system(request),
-                temperature=_optional(request.temperature),
-                top_p=_optional(request.top_p),
-                top_k=_optional(request.top_k),
-                stop_sequences=_optional(request.stop),
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                timeout=_optional(request.timeout),
-            )
-        except anthropic.APIError as error:
-            raise request.error(str(error))
-        request.id = anthropic_response.id
-        self._set_usage(response, anthropic_response.usage)
-        self._check_stop_reason(request, anthropic_response.stop_reason)
-        object: NS = {}
-        tools: ToolCalls = []
-        for content in anthropic_response.content:
-            if content.type == "tool_use":
-                if content.name == tool.compatible_name:
-                    object = cast(NS, content.input)
-                else:
-                    tools.append((content.id, content.name, cast(NS, content.input)))
-        if tools:
-            self._run_tools(request, response, messages, tools)
-            return self._generate_object(request, response, messages=messages)
-        if not object:
-            raise request.error(f"{request} response has no object")
-        log.debug(Emoji.ASSISTANT + "%s", object)
-        response.complete_object(request.schema.model_validate(object))
-        return response
 
     def _tools(self, request: GenerateRequest) -> list[ToolParam] | anthropic.NotGiven:
         if not request.tools_dict:

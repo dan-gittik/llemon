@@ -4,11 +4,11 @@ import logging
 import warnings
 from decimal import Decimal
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, ClassVar
+from typing import TYPE_CHECKING, Any, AsyncIterator, ClassVar
 
 import llemon
 from llemon.types import NS, FilesArgument, HistoryArgument, RenderArgument, ToolsArgument, Warning
-from llemon.utils import Emoji, concat, filtered_dict, trim
+from llemon.utils import Emoji, concat, filtered_dict, now, trim
 
 if TYPE_CHECKING:
     from llemon import LLM, Call, Tool
@@ -36,6 +36,7 @@ class GenerateRequest(llemon.Request):
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         variants: int | None = None,
+        stream: bool | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
@@ -71,6 +72,7 @@ class GenerateRequest(llemon.Request):
         self.tools = llemon.Tool.resolve(tools)
         self.use_tool = use_tool
         self.variants = variants
+        self.stream = stream
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.seed = seed
@@ -117,6 +119,10 @@ class GenerateRequest(llemon.Request):
         return self._return_incomplete_message
 
     def check_supported(self) -> None:
+        if self.stream and not self.llm.config.supports_streaming:
+            raise self.error(f"{self.llm} doesn't support streaming")
+        if self.stream and self.variants:
+            raise self.error("streaming multiple variants is not supported")
         for parameter in self.llm.config.unsupported_parameters or []:
             if getattr(self, parameter, None) is not None:
                 warnings.warn(f"{self.llm} doesn't support {parameter}", Warning)
@@ -318,6 +324,53 @@ class GenerateResponse(llemon.Response):
                 reasoning_tokens=self.reasoning_tokens,
                 texts=self._texts,
                 selected=self._selected,
+            )
+        )
+        return data
+
+
+class GenerateStreamResponse(llemon.GenerateResponse):
+
+    def __init__(self, request: GenerateRequest) -> None:
+        super().__init__(request)
+        self.stream: AsyncIterator[str] | None = None
+        self._chunks: list[str] = []
+        self._ttft: float | None = None
+
+    def __str__(self) -> str:
+        end = "..." if not self.ended else ""
+        return f"{self.request.llm}: {'|'.join(self._chunks)}{end}"
+
+    async def __aiter__(self) -> AsyncIterator[str]:
+        if self.stream is None:
+            raise self._incomplete_request()
+        async for chunk in self.stream:
+            if self._ttft is None:
+                self._ttft = (now() - self.started).total_seconds()
+            self._chunks.append(chunk)
+            yield chunk
+
+    @cached_property
+    def ttft(self) -> float:
+        if not self.ended:
+            raise self._incomplete_request()
+        return self._ttft or 0.0
+
+    def complete_stream(self) -> None:
+        self.complete_text("".join(self._chunks))
+
+    def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
+        super()._restore(unpacker, refs)
+        self._chunks = unpacker.get("chunks", list)
+        self._ttft = unpacker.get("ttft", float)
+
+    def _dump(self, refs: DumpRefs) -> NS:
+        data = super()._dump(refs)
+        data.update(
+            filtered_dict(
+                text=self.text,
+                chunks=self._chunks,
+                ttft=self.ttft,
             )
         )
         return data

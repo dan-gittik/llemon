@@ -94,7 +94,7 @@ def type(packages: list[str]) -> None:
     for package in packages:
         targets.extend(["-p", f"{PACKAGE}.{package}"])
     if not packages:
-        targets.extend(["-p", PACKAGE, "-p", "tests"])
+        targets.extend(["-p", PACKAGE, "-p", "tests", "-p", "examples"])
     _execute("mypy", *targets)
 
 
@@ -150,8 +150,6 @@ def check_signatures() -> None:
     _check_signatures("Conversation.__init__", "Conversation.replace", optional={"llm"})
     _check_signatures("GenerateRequest.__init__", "LLM.generate", **llm_diff)
     _check_signatures("GenerateRequest.__init__", "Conversation.generate", **conv_diff)
-    _check_signatures("GenerateStreamRequest.__init__", "LLM.generate_stream", **llm_diff)
-    _check_signatures("GenerateStreamRequest.__init__", "Conversation.generate_stream", **conv_diff)
     _check_signatures("GenerateObjectRequest.__init__", "LLM.generate_object", **llm_diff)
     _check_signatures("GenerateObjectRequest.__init__", "Conversation.generate_object", **conv_diff)
     _check_signatures("ClassifyRequest.__init__", "LLM.classify", **llm_diff)
@@ -277,6 +275,10 @@ def _async_to_sync(text: str, async_paths: list[pathlib.Path]) -> str:
     text = re.sub(r"\s*enable_async=True,", "", text)
     text = text.replace("render_async", "render")
     text = text.replace("to_async", "to_sync")
+    # isasyncgenfunction -> isgeneratorfunction
+    text = re.sub(r"isasyncgenfunction", "isgeneratorfunction", text)
+    # .aread() -> .read()
+    text = text.replace(".aread()", ".read()")
     # async def -> def
     # async for -> for
     # async with -> with

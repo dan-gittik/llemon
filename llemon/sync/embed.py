@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from decimal import Decimal
+from functools import cached_property
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -70,6 +72,10 @@ class EmbedResponse(llemon.Response):
     def __str__(self) -> str:
         return f"{self.request.embedder}: {self.embedding!r}"
 
+    @cached_property
+    def cost(self) -> Decimal:
+        return (Decimal(self.input_tokens) * Decimal(self.request.embedder.config.cost_per_1m_tokens or 0)) / 1_000_000
+
     def complete_embedding(self, embedding: bytes | list[float] | NDArray[np.float32]) -> None:
         if isinstance(embedding, bytes):
             self.embedding = np.frombuffer(embedding, dtype=np.float32)
@@ -92,7 +98,7 @@ class EmbedResponse(llemon.Response):
         data = super()._dump(refs)
         data.update(
             filtered_dict(
-                embedding=self.embedding.tobytes() if self.embedding else None,
+                embedding=self.embedding.tobytes() if self.embedding is not None else None,
                 input_tokens=self.input_tokens,
             )
         )

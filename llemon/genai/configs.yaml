@@ -31,14 +31,38 @@ tts:
   # OpenAI Models
   tts-1:
     supports_timestamps: false
+    supports_streaming: false
+    supports_formats:
+      - mp3
+      - opus
+      - aac
+      - flac
+      - wav
+      - pcm
     cost_per_1m_characters: 15.0
     cost_per_1m_tokens: 0.0
   tts-1-hd:
     supports_timestamps: false
+    supports_streaming: false
+    supports_formats:
+      - mp3
+      - opus
+      - aac
+      - flac
+      - wav
+      - pcm
     cost_per_1m_characters: 30.0
     cost_per_1m_tokens: 0.0
   gpt-4o-mini-tts:
     supports_timestamps: false
+    supports_streaming: true
+    supports_formats:
+      - mp3
+      - opus
+      - aac
+      - flac
+      - wav
+      - pcm
     cost_per_1m_characters: 0.0
     cost_per_1m_tokens: 12.0
 

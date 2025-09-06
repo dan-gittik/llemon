@@ -42,3 +42,6 @@ class Embedder(llemon.Serializeable):
             model=self.model,
             config=config,
         )
+
+
+EmbedderModel = llemon.Model[Embedder]

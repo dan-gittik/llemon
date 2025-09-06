@@ -31,7 +31,7 @@ class EmbedRequest(llemon.Request):
 
     def __str__(self) -> str:
         return f"{self.embedder}.embed({self.text!r})"
-    
+
     def format(self, emoji: bool = True) -> str:
         embed = Emoji.EMBED if emoji else "Embed: " + self.text
         return f"{embed}{self.text}"
@@ -74,9 +74,7 @@ class EmbedResponse(llemon.Response):
 
     @cached_property
     def cost(self) -> Decimal:
-        return (
-            Decimal(self.input_tokens) * Decimal(self.request.embedder.config.cost_per_1m_tokens or 0)
-        ) / 1_000_000
+        return (Decimal(self.input_tokens) * Decimal(self.request.embedder.config.cost_per_1m_tokens or 0)) / 1_000_000
 
     def complete_embedding(self, embedding: bytes | list[float] | NDArray[np.float32]) -> None:
         if isinstance(embedding, bytes):
@@ -100,7 +98,7 @@ class EmbedResponse(llemon.Response):
         data = super()._dump(refs)
         data.update(
             filtered_dict(
-                embedding=self.embedding.tobytes() if self.embedding else None,
+                embedding=self.embedding.tobytes() if self.embedding is not None else None,
                 input_tokens=self.input_tokens,
             )
         )

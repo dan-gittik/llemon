@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
 from functools import cached_property
-from typing import TYPE_CHECKING, Any, AsyncIterator, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast, overload
 
 from pydantic import BaseModel
 
@@ -15,7 +14,6 @@ if TYPE_CHECKING:
         ClassifyResponse,
         Conversation,
         GenerateObjectResponse,
-        GenerateRequest,
         GenerateResponse,
         GenerateStreamResponse,
         LLMConfig,
@@ -65,12 +63,12 @@ class LLM(llemon.Serializeable):
             cache=cache,
         )
 
+    @overload
     async def generate(
         self,
-        message1: str | None = None,
-        message2: str | None = None,
-        /,
+        user_input: str | None = None,
         *,
+        instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
         history: HistoryArgument = None,
@@ -78,6 +76,7 @@ class LLM(llemon.Serializeable):
         tools: ToolsArgument = None,
         use_tool: bool | str | None = None,
         variants: int | None = None,
+        stream: Literal[False] | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
         seed: int | None = None,
@@ -93,8 +92,68 @@ class LLM(llemon.Serializeable):
         cache: bool | None = None,
         timeout: float | None = None,
         **provider_options: Any,
-    ) -> GenerateResponse:
-        instructions, user_input = self._resolve_messages(message1, message2)
+    ) -> GenerateResponse: ...
+
+    @overload
+    async def generate(
+        self,
+        user_input: str | None = None,
+        *,
+        instructions: str | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        history: HistoryArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        stream: Literal[True],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
+        **provider_options: Any,
+    ) -> GenerateStreamResponse: ...
+
+    async def generate(
+        self,
+        user_input: str | None = None,
+        *,
+        instructions: str | None = None,
+        context: NS | None = None,
+        render: RenderArgument = None,
+        history: HistoryArgument = None,
+        files: FilesArgument = None,
+        tools: ToolsArgument = None,
+        use_tool: bool | str | None = None,
+        variants: int | None = None,
+        stream: bool | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        seed: int | None = None,
+        frequency_penalty: float | None = None,
+        presence_penalty: float | None = None,
+        repetition_penalty: float | None = None,
+        top_p: float | None = None,
+        min_p: float | None = None,
+        top_k: int | None = None,
+        stop: list[str] | None = None,
+        prediction: str | None = None,
+        return_incomplete_message: bool | None = None,
+        cache: bool | None = None,
+        timeout: float | None = None,
+        **provider_options: Any,
+    ) -> GenerateResponse | GenerateStreamResponse:
         request = llemon.GenerateRequest(
             llm=self,
             user_input=user_input,
@@ -106,6 +165,7 @@ class LLM(llemon.Serializeable):
             tools=tools,
             use_tool=use_tool,
             variants=variants,
+            stream=stream,
             temperature=temperature,
             max_tokens=max_tokens,
             seed=seed,
@@ -122,74 +182,14 @@ class LLM(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        async with self._standalone(request):
-            return await self.provider.generate(request)
-
-    async def generate_stream(
-        self,
-        message1: str | None = None,
-        message2: str | None = None,
-        /,
-        *,
-        context: NS | None = None,
-        render: RenderArgument = None,
-        history: HistoryArgument = None,
-        files: FilesArgument = None,
-        tools: ToolsArgument = None,
-        use_tool: bool | str | None = None,
-        temperature: float | None = None,
-        max_tokens: int | None = None,
-        seed: int | None = None,
-        frequency_penalty: float | None = None,
-        presence_penalty: float | None = None,
-        repetition_penalty: float | None = None,
-        top_p: float | None = None,
-        min_p: float | None = None,
-        top_k: int | None = None,
-        stop: list[str] | None = None,
-        prediction: str | None = None,
-        return_incomplete_message: bool | None = None,
-        cache: bool | None = None,
-        timeout: float | None = None,
-        **provider_options: Any,
-    ) -> GenerateStreamResponse:
-        instructions, user_input = self._resolve_messages(message1, message2)
-        request = llemon.GenerateStreamRequest(
-            llm=self,
-            user_input=user_input,
-            instructions=instructions,
-            context=context,
-            render=render,
-            history=history,
-            files=files,
-            tools=tools,
-            use_tool=use_tool,
-            temperature=temperature,
-            max_tokens=max_tokens,
-            seed=seed,
-            frequency_penalty=frequency_penalty,
-            presence_penalty=presence_penalty,
-            repetition_penalty=repetition_penalty,
-            top_p=top_p,
-            min_p=min_p,
-            top_k=top_k,
-            stop=stop,
-            prediction=prediction,
-            return_incomplete_message=return_incomplete_message,
-            cache=cache,
-            timeout=timeout,
-            **provider_options,
-        )
-        async with self._standalone(request):
-            return await self.provider.generate_stream(request)
+        return await self.provider.generate(request, stream=stream)
 
     async def generate_object[T: BaseModel](
         self,
         schema: NS | type[T],
-        message1: str | None = None,
-        message2: str | None = None,
-        /,
+        user_input: str | None = None,
         *,
+        instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument = None,
         history: HistoryArgument = None,
@@ -214,7 +214,6 @@ class LLM(llemon.Serializeable):
             model_class = cast(type[T], schema_to_model(schema))
         else:
             model_class = schema
-        instructions, user_input = self._resolve_messages(message1, message2)
         request = llemon.GenerateObjectRequest(
             schema=model_class,
             llm=self,
@@ -240,8 +239,7 @@ class LLM(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        async with self._standalone(request):
-            return await self.provider.generate_object(request)
+        return await self.provider.generate_object(request)
 
     async def classify(
         self,
@@ -278,8 +276,7 @@ class LLM(llemon.Serializeable):
             timeout=timeout,
             **provider_options,
         )
-        async with self._standalone(request):
-            return await self.provider.classify(request)
+        return await self.provider.classify(request)
 
     @classmethod
     def _load(cls, unpacker: Unpacker, refs: LoadRefs) -> Self:
@@ -296,16 +293,5 @@ class LLM(llemon.Serializeable):
             config=config,
         )
 
-    def _resolve_messages(self, message1: str | None, message2: str | None) -> tuple[str | None, str | None]:
-        if message2 is None:
-            return None, message1
-        return message1, message2
 
-    @asynccontextmanager
-    async def _standalone(self, request: GenerateRequest) -> AsyncIterator[None]:
-        state: NS = {}
-        await self.provider.prepare_generation(request, state)
-        try:
-            yield
-        finally:
-            await self.provider.cleanup_generation(state)
+LLMModel = llemon.Model[LLM]

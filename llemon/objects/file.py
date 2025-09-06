@@ -114,7 +114,7 @@ class File(llemon.Serializeable):
         file = cls(name, mimetype, data)
         log.debug("created %s from data", file)
         return file
-    
+
     @cached_property
     def data(self) -> bytes:
         if self._data is None:
@@ -135,11 +135,11 @@ class File(llemon.Serializeable):
         if self._url:
             return self._url
         return f"data:{self.mimetype};base64,{self.base64}"
-    
+
     @property
     def is_url(self) -> bool:
         return bool(self._url and not self._data)
-    
+
     @cached_property
     def is_image(self) -> bool:
         return self.mimetype.startswith("image/")
@@ -149,7 +149,7 @@ class File(llemon.Serializeable):
             return
         log.debug("fetching %s data from %s", self, self.url)
         self._data = await async_fetch(self.url)
-    
+
     def save(self, path: str | pathlib.Path) -> None:
         path = pathlib.Path(path).absolute()
         if path.is_dir():

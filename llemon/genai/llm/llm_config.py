@@ -6,8 +6,6 @@ import llemon
 
 
 class LLMConfig(llemon.Config):
-    category = llemon.CONFIGS["llm"]
-
     tokenizer: str | None = None
     knowledge_cutoff: dt.date | None = None
     context_window: int | None = None

@@ -4,21 +4,21 @@ from typing import TYPE_CHECKING, ClassVar
 
 import openai
 
-import llemon
+import llemon.sync as llemon
 
 if TYPE_CHECKING:
-    from llemon import SynthesizeRequest, SynthesizeResponse
+    from llemon.sync import SynthesizeRequest, SynthesizeResponse
 
 
 class OpenAITTS(llemon.TTSProvider):
 
-    client: openai.AsyncOpenAI
+    client: openai.OpenAI
     default_voice: ClassVar[str] = "alloy"
 
-    async def _synthesize(self, request: SynthesizeRequest, response: SynthesizeResponse) -> None:
+    def _synthesize(self, request: SynthesizeRequest, response: SynthesizeResponse) -> None:
         try:
             # TODO: raw HTTP request to get the usage?
-            openai_response = await self.with_overrides(self.client.audio.speech.create)(
+            openai_response = self.with_overrides(self.client.audio.speech.create)(
                 request,
                 model=request.tts.model,
                 input=request.text,
@@ -30,6 +30,6 @@ class OpenAITTS(llemon.TTSProvider):
         except openai.APIError as error:
             raise request.error(str(error))
         request.id = openai_response.response.headers["x-request-id"]
-        data = await openai_response.aread()
+        data = openai_response.read()
         mimetype = openai_response.response.headers["content-type"]
         response.complete_synthesis(data, mimetype)

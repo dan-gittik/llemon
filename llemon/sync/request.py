@@ -22,6 +22,8 @@ class Request(Superclass, llemon.Serializeable):
             overrides = {}
         self.id = str(uuid.uuid4())
         self.overrides = overrides
+        self.state: NS = {}
+        self.cleanup = True
 
     def __str__(self) -> str:
         return "request"
@@ -102,7 +104,7 @@ class Response(Superclass, llemon.Serializeable):
         return response
 
     def _restore(self, unpacker: Unpacker, refs: LoadRefs) -> None:
-        raise NotImplementedError()
+        pass
 
     def _dump(self, refs: DumpRefs) -> NS:
         if not self.ended:

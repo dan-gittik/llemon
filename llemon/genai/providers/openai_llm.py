@@ -59,48 +59,211 @@ class OpenAILLM(llemon.LLMProvider):
 
     client: openai.AsyncOpenAI
 
-    async def prepare_generation(self, request: GenerateRequest, state: NS) -> None:
-        await super().prepare_generation(request, state)
-        if isinstance(request, llemon.GenerateRequest):
-            if request.files:
-                log.debug("uploading files")
-            await async_parallelize((self._upload_file, file, state) for file in request.files)
+    async def count_tokens(self, request: GenerateRequest) -> int:
+        raise NotImplementedError()
+
+    async def prepare_generation(self, request: GenerateRequest) -> None:
+        await super().prepare_generation(request)
+        if request.files:
+            log.debug("uploading files")
+        await async_parallelize((self._upload_file, file, request.state) for file in request.files)
 
     async def cleanup_generation(self, state: NS) -> None:
         await async_parallelize((self._delete_file, file_id) for file_id in state.pop(FILE_IDS, set()))
         state.pop(FILE_HASHES, None)
         await super().cleanup_generation(state)
 
-    async def count_tokens(self, request: GenerateRequest) -> int:
-        raise NotImplementedError()
+    async def _generate(
+        self,
+        request: GenerateRequest,
+        response: GenerateResponse,
+        messages: list[ChatCompletionMessageParam] | None = None,
+        json: bool = False,
+        logit_bias: dict[str, int] | openai.NotGiven = openai.NOT_GIVEN,
+    ) -> None:
+        if messages is None:
+            messages = await self._messages(request)
+        try:
+            extra_body = filtered_dict(
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
+                min_p=request.min_p,
+            )
+            response_format = ResponseFormatJSONObject(type="json_object") if json else openai.NOT_GIVEN
+            openai_response = await self.with_overrides(self.client.chat.completions.create)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                temperature=request.temperature,
+                max_completion_tokens=request.max_tokens,
+                n=request.variants,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
+                extra_body=extra_body,
+                response_format=response_format,
+                logit_bias=logit_bias,
+                timeout=request.timeout,
+            )
+        except openai.APIError as error:
+            raise request.error(str(error))
+        request.id = openai_response.id
+        self._set_usage(response, openai_response.usage)
+        result, is_tool = self._parse_choices(request, openai_response.choices)
+        if is_tool:
+            await self._run_tools(request, response, messages, cast(ToolCalls, result))
+            await self._generate(request, response, messages=messages, json=json)
+            return
+        result = cast(list[str], result)
+        for variant in result:
+            log.debug(Emoji.ASSISTANT + "%s", variant)
+        response.complete_text(*result)
 
-    async def generate(self, request: GenerateRequest) -> GenerateResponse:
-        return await self._generate(request, llemon.GenerateResponse(request))
+    async def _generate_stream(
+        self,
+        request: GenerateRequest,
+        response: GenerateStreamResponse,
+        messages: list[ChatCompletionMessageParam] | None = None,
+    ) -> None:
+        if messages is None:
+            messages = await self._messages(request)
+        try:
+            extra_body = filtered_dict(
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
+                min_p=request.min_p,
+            )
+            openai_response = await self.with_overrides(self.client.chat.completions.create)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                temperature=request.temperature,
+                max_completion_tokens=request.max_tokens,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
+                extra_body=extra_body,
+                stream=True,
+                stream_options={"include_usage": True},
+                timeout=request.timeout,
+            )
+        except openai.APIError as error:
+            raise request.error(str(error))
 
-    async def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        return await self._generate_stream(request, llemon.GenerateStreamResponse(request))
+        async def stream() -> AsyncIterator[str]:
+            tool_stream: ToolStream = {}
+            async for chunk in openai_response:
+                if not chunk.choices:
+                    request.id = chunk.id
+                    self._set_usage(response, chunk.usage)
+                    break
+                result, is_tool = self._parse_stream_choices(request, chunk.choices)
+                if is_tool:
+                    for index, id, name, arguments in cast(ToolDeltas, result):
+                        if index not in tool_stream:
+                            tool_stream[index] = (id, name, [])
+                        else:
+                            tool_stream[index][2].append(arguments)
+                elif result:
+                    yield cast(str, result)
+            if tool_stream:
+                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
+                await self._run_tools(request, response, messages, tools)
+                await self._generate_stream(request, response, messages=messages)
+                assert response.stream is not None
+                async for delta in response.stream:
+                    yield delta
+            else:
+                response.complete_stream()
+                log.debug(Emoji.ASSISTANT + "%s", response.text)
 
-    async def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
+        response.stream = stream()
+
+    async def _generate_object[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+        messages: list[ChatCompletionMessageParam] | None = None,
+    ) -> None:
         if not request.llm.config.supports_structured_output:
-            return await self._generate_json(request, llemon.GenerateObjectResponse(request))
-        return await self._generate_object(request, llemon.GenerateObjectResponse(request))
+            await self._generate_json(request, response)
+            return
+        if messages is None:
+            messages = await self._messages(request)
+        try:
+            extra_body = filtered_dict(
+                top_k=request.top_k,
+                repetition_penalty=request.repetition_penalty,
+                min_p=request.min_p,
+            )
+            openai_response = await self.with_overrides(self.client.beta.chat.completions.parse)(
+                request,
+                model=request.llm.model,
+                messages=messages,
+                tools=self._tools(request),
+                tool_choice=self._tool_choice(request),
+                temperature=request.temperature,
+                max_completion_tokens=request.max_tokens,
+                n=request.variants,
+                seed=request.seed,
+                frequency_penalty=request.frequency_penalty,
+                presence_penalty=request.presence_penalty,
+                top_p=request.top_p,
+                stop=request.stop,
+                extra_body=extra_body,
+                response_format=request.schema,
+                timeout=request.timeout,
+            )
+        except openai.APIError as error:
+            raise request.error(str(error))
+        request.id = openai_response.id
+        self._set_usage(response, openai_response.usage)
+        result, is_tool = self._parse_object_choices(request, openai_response.choices)
+        if is_tool:
+            await self._run_tools(request, response, messages, cast(ToolCalls, result))
+            await self._generate_object(request, response, messages=messages)
+            return
+        result = cast(list[T], result)
+        for variant in result:
+            log.debug(Emoji.ASSISTANT + "%s", variant)
+        response.complete_object(*result)
 
-    async def classify(self, request: ClassifyRequest) -> ClassifyResponse:
+    async def _generate_json[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+    ) -> None:
+        log.debug("%s doesn't support structured output; using JSON instead", request.llm.model)
+        request.append_json_instruction()
+        generate_response = llemon.GenerateResponse(request)
+        await self._generate(request, generate_response, json=True)
+        data = request.schema.model_validate_json(generate_response.text)
+        response.complete_object(data)
+        response.calls = generate_response.calls
+
+    async def _classify(self, request: ClassifyRequest, response: ClassifyResponse) -> None:
         if not request.use_logit_biasing:
-            return await super().classify(request)
-        response = llemon.ClassifyResponse(request)
+            return await super()._classify(request, response)
         log.debug("classifying with logit biasing")
         tokens = [str(i) for i in range(len(request.answers))]
         token_ids = await request.llm.tokenizer.encode(*tokens)
         if len(token_ids) != len(request.answers):
             raise request.error(f"can't do classification with {len(request.answers)} answers")
         logit_bias = {str(token_id): 100 for token_id in token_ids}
-        generate_response = await self._generate(request, llemon.GenerateResponse(request), logit_bias=logit_bias)
+        generate_response = llemon.GenerateResponse(request)
+        await self._generate(request, generate_response, logit_bias=logit_bias)
         answer_num = int(generate_response.text)
         answer = request.answers[answer_num]
         log.debug("classification: %s", answer)
         response.complete_answer(answer)
-        return response
 
     async def _upload_file(self, file: File, state: NS) -> None:
         if file.is_url and file.is_image:
@@ -206,180 +369,6 @@ class OpenAILLM(llemon.LLMProvider):
             )
             for call in calls
         ]
-
-    async def _generate(
-        self,
-        request: GenerateRequest,
-        response: GenerateResponse,
-        messages: list[ChatCompletionMessageParam] | None = None,
-        json: bool = False,
-        logit_bias: dict[str, int] | openai.NotGiven = openai.NOT_GIVEN,
-    ) -> GenerateResponse:
-        if messages is None:
-            messages = await self._messages(request)
-        try:
-            extra_body = filtered_dict(
-                top_k=request.top_k,
-                repetition_penalty=request.repetition_penalty,
-                min_p=request.min_p,
-            )
-            response_format = ResponseFormatJSONObject(type="json_object") if json else openai.NOT_GIVEN
-            openai_response = await self.with_overrides(self.client.chat.completions.create)(
-                request,
-                model=request.llm.model,
-                messages=messages,
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                temperature=request.temperature,
-                max_completion_tokens=request.max_tokens,
-                n=request.variants,
-                seed=request.seed,
-                frequency_penalty=request.frequency_penalty,
-                presence_penalty=request.presence_penalty,
-                top_p=request.top_p,
-                stop=request.stop,
-                extra_body=extra_body,
-                response_format=response_format,
-                logit_bias=logit_bias,
-                timeout=request.timeout,
-            )
-        except openai.APIError as error:
-            raise request.error(str(error))
-        request.id = openai_response.id
-        self._set_usage(response, openai_response.usage)
-        result, is_tool = self._parse_choices(request, openai_response.choices)
-        if is_tool:
-            await self._run_tools(request, response, messages, cast(ToolCalls, result))
-            return await self._generate(request, response, messages=messages, json=json)
-        result = cast(list[str], result)
-        for variant in result:
-            log.debug(Emoji.ASSISTANT + "%s", variant)
-        response.complete_text(*result)
-        return response
-
-    async def _generate_stream(
-        self,
-        request: GenerateStreamRequest,
-        response: GenerateStreamResponse,
-        messages: list[ChatCompletionMessageParam] | None = None,
-    ) -> GenerateStreamResponse:
-        if messages is None:
-            messages = await self._messages(request)
-        try:
-            extra_body = filtered_dict(
-                top_k=request.top_k,
-                repetition_penalty=request.repetition_penalty,
-                min_p=request.min_p,
-            )
-            openai_response = await self.with_overrides(self.client.chat.completions.create)(
-                request,
-                model=request.llm.model,
-                messages=messages,
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                temperature=request.temperature,
-                max_completion_tokens=request.max_tokens,
-                seed=request.seed,
-                frequency_penalty=request.frequency_penalty,
-                presence_penalty=request.presence_penalty,
-                top_p=request.top_p,
-                stop=request.stop,
-                extra_body=extra_body,
-                stream=True,
-                stream_options={"include_usage": True},
-                timeout=request.timeout,
-            )
-        except openai.APIError as error:
-            raise request.error(str(error))
-
-        async def stream() -> AsyncIterator[str]:
-            tool_stream: ToolStream = {}
-            async for chunk in openai_response:
-                if not chunk.choices:
-                    request.id = chunk.id
-                    self._set_usage(response, chunk.usage)
-                    break
-                result, is_tool = self._parse_stream_choices(request, chunk.choices)
-                if is_tool:
-                    for index, id, name, arguments in cast(ToolDeltas, result):
-                        if index not in tool_stream:
-                            tool_stream[index] = (id, name, [])
-                        else:
-                            tool_stream[index][2].append(arguments)
-                elif result:
-                    yield cast(str, result)
-            if tool_stream:
-                tools = [(id, name, json.loads("".join(args))) for (id, name, args) in tool_stream.values()]
-                await self._run_tools(request, response, messages, tools)
-                await self._generate_stream(request, response, messages=messages)
-                assert response.stream is not None
-                async for delta in response.stream:
-                    yield delta
-            else:
-                response.complete_stream()
-                log.debug(Emoji.ASSISTANT + "%s", response.text)
-
-        response.stream = stream()
-        return response
-
-    async def _generate_object[T: BaseModel](
-        self,
-        request: GenerateObjectRequest[T],
-        response: GenerateObjectResponse[T],
-        messages: list[ChatCompletionMessageParam] | None = None,
-    ) -> GenerateObjectResponse[T]:
-        if messages is None:
-            messages = await self._messages(request)
-        try:
-            extra_body = filtered_dict(
-                top_k=request.top_k,
-                repetition_penalty=request.repetition_penalty,
-                min_p=request.min_p,
-            )
-            openai_response = await self.with_overrides(self.client.beta.chat.completions.parse)(
-                request,
-                model=request.llm.model,
-                messages=messages,
-                tools=self._tools(request),
-                tool_choice=self._tool_choice(request),
-                temperature=request.temperature,
-                max_completion_tokens=request.max_tokens,
-                n=request.variants,
-                seed=request.seed,
-                frequency_penalty=request.frequency_penalty,
-                presence_penalty=request.presence_penalty,
-                top_p=request.top_p,
-                stop=request.stop,
-                extra_body=extra_body,
-                response_format=request.schema,
-                timeout=request.timeout,
-            )
-        except openai.APIError as error:
-            raise request.error(str(error))
-        request.id = openai_response.id
-        self._set_usage(response, openai_response.usage)
-        result, is_tool = self._parse_object_choices(request, openai_response.choices)
-        if is_tool:
-            await self._run_tools(request, response, messages, cast(ToolCalls, result))
-            return await self._generate_object(request, response, messages=messages)
-        result = cast(list[T], result)
-        for variant in result:
-            log.debug(Emoji.ASSISTANT + "%s", variant)
-        response.complete_object(*result)
-        return response
-
-    async def _generate_json[T: BaseModel](
-        self,
-        request: GenerateObjectRequest[T],
-        response: GenerateObjectResponse[T],
-    ) -> GenerateObjectResponse[T]:
-        log.debug("%s doesn't support structured output; using JSON instead", request.llm.model)
-        request.append_json_instruction()
-        generate_response = await self._generate(request, llemon.GenerateResponse(request), json=True)
-        data = request.schema.model_validate_json(generate_response.text)
-        response.complete_object(data)
-        response.calls = generate_response.calls
-        return response
 
     def _tools(self, request: GenerateRequest) -> list[ChatCompletionToolParam] | openai.NotGiven:
         if not request.tools:
@@ -510,7 +499,7 @@ class OpenAILLM(llemon.LLMProvider):
         messages: list[ChatCompletionMessageParam],
         tools: ToolCalls,
     ) -> None:
-        calls = [Call(id, request.tools_dict[name], args) for id, name, args in tools]
+        calls = [llemon.Call(id, request.tools_dict[name], args) for id, name, args in tools]
         await async_parallelize(call.run for call in calls)
         messages.append(self._tool_call(calls))
         messages.extend(self._tool_results(calls))

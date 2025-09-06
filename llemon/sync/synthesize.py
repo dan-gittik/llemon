@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import llemon.sync as llemon
 from llemon.sync.types import NS, Timestamps, Warning
-from llemon.utils import Emoji, filtered_dict
+from llemon.utils import Emoji, concat, filtered_dict, get_extension, text_to_name
 
 if TYPE_CHECKING:
     from llemon.sync import TTS, File
@@ -45,6 +45,10 @@ class SynthesizeRequest(llemon.Request):
         return f"{synthesize}{self.text}"
 
     def check_supported(self) -> None:
+        supported_formats = self.tts.config.supports_formats or []
+        if self.output_format and self.output_format not in supported_formats:
+            supported = concat(supported_formats)
+            raise self.error(f"{self.tts} doesn't support {self.output_format} (supported formats are {supported})")
         if self.timestamps and not self.tts.config.supports_timestamps:
             warnings.warn(f"{self.tts} doesn't support timestamps", Warning)
             self.timestamps = None
@@ -94,13 +98,13 @@ class SynthesizeResponse(llemon.Response):
 
     @cached_property
     def cost(self) -> Decimal:
-        return (
-            Decimal(len(self.request.text)) * Decimal(self.request.tts.config.cost_per_1m_characters or 0)
-            + Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens or 0)
-        ) / 1_000_000
+        if self.request.tts.config.cost_per_1m_characters:
+            return Decimal(len(self.request.text)) * Decimal(self.request.tts.config.cost_per_1m_characters) / 1_000_000
+        return Decimal(self.output_tokens) * Decimal(self.request.tts.config.cost_per_1m_tokens or 0) / 1_000_000
 
-    def complete_synthesis(self, audio: File, timestamps: Timestamps | None = None) -> None:
-        self.audio = audio
+    def complete_synthesis(self, data: bytes, mimetype: str, timestamps: Timestamps | None = None) -> None:
+        name = text_to_name(self.request.text, max_length=100, default="synthesis") + get_extension(mimetype)
+        self.audio = llemon.File.from_data(data, mimetype, name)
         self.timestamps = timestamps
         self.complete()
 

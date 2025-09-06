@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import inspect
 from functools import wraps
-from typing import TYPE_CHECKING, Any, Callable, ClassVar, Concatenate, Self
+from typing import TYPE_CHECKING, Any, Callable, ClassVar, Concatenate, Iterator, Self, cast, overload
 
 from dotenv import dotenv_values
 
@@ -11,7 +11,6 @@ from llemon.utils import Superclass, filtered_dict
 
 if TYPE_CHECKING:
     from llemon.sync import Request
-
 
 UNNAMED_PARAMETERS = {
     inspect.Parameter.POSITIONAL_ONLY,
@@ -29,7 +28,7 @@ class Provider(Superclass):
         cls.instance = None
 
     def __init__(self) -> None:
-        self._wrappers: dict[Callable, Callable] = {}
+        self._wrappers: dict[object, object] = {}
 
     def __str__(self) -> str:
         return f"{self.__class__.__name__}"
@@ -73,19 +72,53 @@ class Provider(Superclass):
             cls.instance = cls.create()
         return cls.instance
 
+    @overload
     def with_overrides[R, **P](
         self,
-        callable: Callable[P, R],
-    ) -> Callable[Concatenate[Request, P], R]:
-        if callable in self._wrappers:
-            return self._wrappers[callable]
+        function: Callable[P, R],
+    ) -> Callable[Concatenate[Request, P], R]: ...
 
-        @wraps(callable)
-        def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> R:
-            for key in kwargs:
-                if key in request.overrides:
-                    kwargs[key] = request.overrides[key]
-            return callable(*args, **filtered_dict(**kwargs))
+    @overload
+    def with_overrides[R, **P](
+        self,
+        function: Callable[P, Iterator[R]],
+    ) -> Callable[Concatenate[Request, P], Iterator[R]]: ...
 
-        self._wrappers[callable] = wrapper
-        return wrapper
+    @overload
+    def with_overrides[R, **P](self, function: Callable[P, R]) -> Callable[Concatenate[Request, P], R]: ...
+
+    def with_overrides[R, **P](self, function: Callable[P, R]) -> Callable[Concatenate[Request, P], R]:
+        cached = self._wrappers.get(function)
+        if cached:
+            return cast(Callable[Concatenate[Request, P], R], cached)
+        if inspect.isgeneratorfunction(function):
+            it = cast(Callable[P, Iterator[R]], function)
+
+            @wraps(it)
+            def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> Iterator[R]:
+                for result in it(*args, **self._override(request, kwargs)):
+                    yield result
+
+        elif inspect.iscoroutinefunction(function):
+            coro = cast(Callable[P, R], function)
+
+            @wraps(coro)
+            def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> R:
+                return coro(*args, **self._override(request, kwargs))
+
+        else:
+            f = cast(Callable[P, R], function)
+
+            @wraps(f)
+            def wrapper(request: Request, *args: P.args, **kwargs: P.kwargs) -> R:
+                return f(*args, **self._override(request, kwargs))
+
+        ret = cast(Callable[Concatenate[Request, P], R], wrapper)
+        self._wrappers[function] = ret
+        return ret
+
+    def _override(self, request: Request, kwargs: NS) -> NS:
+        for key in kwargs:
+            if key in request.overrides:
+                kwargs[key] = request.overrides[key]
+        return filtered_dict(**kwargs)

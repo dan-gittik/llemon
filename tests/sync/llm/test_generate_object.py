@@ -45,17 +45,17 @@ def requires_structured_output(function: Callable[..., Any]) -> Callable[..., An
 @requires_structured_output
 def test_generate_object(llm: LLM):
     response = llm.generate_object(
-        Person,
-        "Extract information about the person.",
-        "Hello, my name is Alice and I like reading and hiking.",
+        schema=Person,
+        instructions="Extract information about the person.",
+        user_input="Hello, my name is Alice and I like reading and hiking.",
     )
     assert response.object.name == "Alice"
     assert response.object.age is None
     assert response.object.hobbies == ["reading", "hiking"]
     response = llm.generate_object(
-        Person,
-        "Extract information about the person.",
-        "Hello, my name is Bob, I'm 25, and I like cooking.",
+        schema=Person,
+        instructions="Extract information about the person.",
+        user_input="Hello, my name is Bob, I'm 25, and I like cooking.",
     )
     assert response.object.name == "Bob"
     assert response.object.age == 25
@@ -65,17 +65,17 @@ def test_generate_object(llm: LLM):
 @requires_structured_output
 def test_generate_dict(llm: LLM):
     response: GenerateObjectResponse[Person] = llm.generate_object(
-        PERSON_SCHEMA,
-        "Extract information about the person.",
-        "Hello, my name is Alice and I like reading and hiking.",
+        schema=PERSON_SCHEMA,
+        instructions="Extract information about the person.",
+        user_input="Hello, my name is Alice and I like reading and hiking.",
     )
     assert response.object.name == "Alice"
     assert response.object.age is None
     assert response.object.hobbies == ["reading", "hiking"]
     response = llm.generate_object(
-        PERSON_SCHEMA,
-        "Extract information about the person.",
-        "Hello, my name is Bob, I'm 25, and I like cooking.",
+        schema=PERSON_SCHEMA,
+        instructions="Extract information about the person.",
+        user_input="Hello, my name is Bob, I'm 25, and I like cooking.",
     )
     assert response.object.name == "Bob"
     assert response.object.age == 25

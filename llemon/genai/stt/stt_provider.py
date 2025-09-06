@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, ClassVar
 import llemon
 
 if TYPE_CHECKING:
-    from llemon import STT, STTProperty, TranscribeRequest, TranscribeResponse
+    from llemon import STT, STTModel, TranscribeRequest, TranscribeResponse
 
 log = logging.getLogger(__name__)
 
@@ -15,7 +15,7 @@ log = logging.getLogger(__name__)
 class STTProvider(ABC, llemon.Provider):
 
     stt_models: ClassVar[dict[str, STT]] = {}
-    default_stt: ClassVar[STTProperty | None] = None
+    default_stt: ClassVar[STTModel | None] = None
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -25,6 +25,7 @@ class STTProvider(ABC, llemon.Provider):
     def stt(
         cls,
         model: str,
+        *,
         supports_timestamps: bool | None = None,
         cost_per_1m_input_tokens: float | None = None,
         cost_per_minute: float | None = None,
@@ -41,6 +42,12 @@ class STTProvider(ABC, llemon.Provider):
             self.stt_models[model] = llemon.STT(self, model, config)
         return self.stt_models[model]
 
-    @abstractmethod
     async def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
+        request.check_supported()
+        response = llemon.TranscribeResponse(request)
+        await self._transcribe(request, response)
+        return response
+
+    @abstractmethod
+    async def _transcribe(self, request: TranscribeRequest, response: TranscribeResponse) -> None:
         raise NotImplementedError()

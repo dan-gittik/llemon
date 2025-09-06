@@ -11,40 +11,37 @@ if TYPE_CHECKING:
     from .deepinfra import DeepInfra
     from .directory import Directory
     from .embed import EmbedRequest, EmbedResponse
-    from .embedder import Embedder
+    from .embedder import Embedder, EmbedderModel
     from .embedder_config import EmbedderConfig
-    from .embedder_property import EmbedderProperty
     from .embedder_provider import EmbedderProvider
     from .file import File
     from .gemini import Gemini
-    from .generate import GenerateRequest, GenerateResponse
+    from .generate import GenerateRequest, GenerateResponse, GenerateStreamResponse
     from .generate_object import GenerateObjectRequest, GenerateObjectResponse
-    from .generate_stream import GenerateStreamRequest, GenerateStreamResponse
-    from .llm import LLM
+    from .llm import LLM, LLMModel
     from .llm_config import LLMConfig
-    from .llm_property import LLMProperty
     from .llm_provider import LLMProvider
     from .llm_tokenizer import LLMToken, LLMTokenizer
+    from .model import Model
     from .ollama import Ollama
     from .openai import OpenAI
     from .openai_embedder import OpenAIEmbedder
     from .openai_llm import OpenAILLM
     from .openai_stt import OpenAISTT
+    from .openai_tts import OpenAITTS
     from .provider import Provider
     from .rendering import Rendering
     from .request import Request, Response
     from .serializeable import Serializeable
-    from .stt import STT
+    from .stt import STT, STTModel
     from .stt_config import STTConfig
-    from .stt_property import STTProperty
     from .stt_provider import STTProvider
     from .synthesize import SynthesizeRequest, SynthesizeResponse
     from .tool import Tool
     from .toolbox import Toolbox
     from .transcribe import TranscribeRequest, TranscribeResponse
-    from .tts import TTS
+    from .tts import TTS, TTSModel
     from .tts_config import TTSConfig
-    from .tts_property import TTSProperty
     from .tts_provider import TTSProvider
     from .types import Error, Warning
 
@@ -83,26 +80,32 @@ __all__ = [
     "Config",
     "CONFIGS",
     "Provider",
+    "Model",
     "LLM",
+    "LLMModel",
     "LLMConfig",
     "LLMProperty",
     "LLMProvider",
     "LLMTokenizer",
     "LLMToken",
     "STT",
+    "STTModel",
     "STTConfig",
     "STTProperty",
     "STTProvider",
     "TTS",
+    "TTSModel",
     "TTSConfig",
     "TTSProperty",
     "TTSProvider",
     "Embedder",
+    "EmbedderModel",
     "EmbedderProperty",
     "EmbedderProvider",
     "EmbedderConfig",
     "OpenAILLM",
     "OpenAISTT",
+    "OpenAITTS",
     "OpenAIEmbedder",
     "OpenAI",
     "Anthropic",
@@ -114,10 +117,9 @@ __all__ = [
     "Response",
     "GenerateRequest",
     "GenerateResponse",
+    "GenerateStreamResponse",
     "GenerateObjectRequest",
     "GenerateObjectResponse",
-    "GenerateStreamRequest",
-    "GenerateStreamResponse",
     "ClassifyRequest",
     "ClassifyResponse",
     "EmbedRequest",

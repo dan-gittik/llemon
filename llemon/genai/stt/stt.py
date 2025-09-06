@@ -58,3 +58,6 @@ class STT(llemon.Serializeable):
             model=self.model,
             config=config,
         )
+
+
+STTModel = llemon.Model[STT]

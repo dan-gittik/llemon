@@ -26,17 +26,15 @@ class LLMTokenizer(Superclass):
 
     def count(
         self,
-        message1: str | None = None,
-        message2: str | None = None,
-        /,
+        user_input: str | None = None,
         *,
+        instructions: str | None = None,
         context: NS | None = None,
         render: RenderArgument | None = None,
         files: FilesArgument | None = None,
         tools: ToolsArgument | None = None,
         schema: type[BaseModel] | NS | None = None,
     ) -> int:
-        instructions, user_input = self.llm._resolve_messages(message1, message2)
         args: NS = dict(
             llm=self.llm,
             user_input=user_input,

@@ -3,7 +3,8 @@ from __future__ import annotations
 import datetime as dt
 import logging
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar, cast
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, ClassVar, Iterator, cast
 
 from pydantic import BaseModel
 
@@ -19,7 +20,6 @@ if TYPE_CHECKING:
         GenerateObjectResponse,
         GenerateRequest,
         GenerateResponse,
-        GenerateStreamRequest,
         GenerateStreamResponse,
     )
 
@@ -81,31 +81,65 @@ class LLMProvider(ABC, llemon.Provider):
     def count_tokens(self, request: GenerateRequest) -> int:
         raise NotImplementedError()
 
-    @abstractmethod
-    def generate(self, request: GenerateRequest) -> GenerateResponse:
-        raise NotImplementedError()
+    def prepare_generation(self, request: GenerateRequest) -> None:
+        pass
 
-    @abstractmethod
-    def generate_stream(self, request: GenerateStreamRequest) -> GenerateStreamResponse:
-        raise NotImplementedError()
+    def cleanup_generation(self, state: NS) -> None:
+        pass
 
-    @abstractmethod
+    def generate(self, request: GenerateRequest, stream: bool | None = None) -> GenerateResponse:
+        with self._generation(request):
+            if stream:
+                response = llemon.GenerateResponse(request)
+                self._generate(request, response)
+                return response
+            else:
+                response = llemon.GenerateStreamResponse(request)
+                self._generate_stream(request, response)
+                return response
+
     def generate_object[T: BaseModel](self, request: GenerateObjectRequest[T]) -> GenerateObjectResponse[T]:
-        raise NotImplementedError()
+        with self._generation(request):
+            response = llemon.GenerateObjectResponse(request)
+            self._generate_object(request, response)
+            return response
 
     def classify(self, request: ClassifyRequest) -> ClassifyResponse:
-        response = llemon.ClassifyResponse(request)
+        with self._generation(request):
+            response = llemon.ClassifyResponse(request)
+            self._classify(request, response)
+            return response
+
+    @abstractmethod
+    def _generate(self, request: GenerateRequest, response: GenerateResponse) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _generate_stream(self, request: GenerateRequest, response: GenerateStreamResponse) -> None:
+        raise NotImplementedError()
+
+    @abstractmethod
+    def _generate_object[T: BaseModel](
+        self,
+        request: GenerateObjectRequest[T],
+        response: GenerateObjectResponse[T],
+    ) -> None:
+        raise NotImplementedError()
+
+    def _classify(self, request: ClassifyRequest, response: ClassifyResponse) -> None:
         reasoning: str | None = None
         if request.llm.config.supports_objects:
             log.debug("classifying with structured output")
             generate_object_request = request.to_object_request()
-            generate_object_response = self.generate_object(generate_object_request)
+            generate_object_response = llemon.GenerateObjectResponse(generate_object_request)
+            self._generate_object(generate_object_request, generate_object_response)
             data = generate_object_response.object.model_dump()
             answer_num = cast(int, data["answer"])
             reasoning = data.get("reasoning")
         else:
             log.debug("classifying with generated text")
-            generate_response = self.generate(request)
+            generate_response = llemon.GenerateResponse(request)
+            self._generate(request, generate_response)
             if not generate_response.text.isdigit():
                 raise request.error(f"{request} answer was not a number: {generate_response.text}")
             answer_num = int(generate_response.text)
@@ -114,13 +148,16 @@ class LLMProvider(ABC, llemon.Provider):
         answer = request.answers[answer_num]
         log.debug("classification: %s (%s)", answer, reasoning or "no reasoning")
         response.complete_answer(answer, reasoning)
-        return response
 
-    def prepare_generation(self, request: GenerateRequest, state: NS) -> None:
+    @contextmanager
+    def _generation(self, request: GenerateRequest) -> Iterator[None]:
         request.check_supported()
-
-    def cleanup_generation(self, state: NS) -> None:
-        pass
+        self.prepare_generation(request)
+        try:
+            yield
+        finally:
+            if request.cleanup:
+                self.cleanup_generation(request.state)
 
     def _log_history(self, history: History) -> None:
         extra = {"markup": True, "highlighter": None}

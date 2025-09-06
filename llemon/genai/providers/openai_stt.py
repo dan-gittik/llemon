@@ -15,8 +15,7 @@ class OpenAISTT(llemon.STTProvider):
 
     client: openai.AsyncOpenAI
 
-    async def transcribe(self, request: TranscribeRequest) -> TranscribeResponse:
-        response = llemon.TranscribeResponse(request)
+    async def _transcribe(self, request: TranscribeRequest, response: TranscribeResponse) -> None:
         try:
             await request.audio.fetch()
             assert request.audio.data is not None
@@ -46,4 +45,3 @@ class OpenAISTT(llemon.STTProvider):
                 elif openai_response.usage.type == "duration":
                     response.duration = openai_response.usage.seconds
         response.complete_transcription(openai_response.text, timestamps)
-        return response

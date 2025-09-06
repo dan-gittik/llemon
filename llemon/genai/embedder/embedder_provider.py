@@ -9,7 +9,7 @@ import llemon
 if TYPE_CHECKING:
     from llemon import (
         Embedder,
-        EmbedderProperty,
+        EmbedderModel,
         EmbedRequest,
         EmbedResponse,
     )
@@ -20,7 +20,7 @@ log = logging.getLogger(__name__)
 class EmbedderProvider(ABC, llemon.Provider):
 
     embedder_models: ClassVar[dict[str, Embedder]] = {}
-    default_embedder: ClassVar[EmbedderProperty | None] = None
+    default_embedder: ClassVar[EmbedderModel | None] = None
 
     def __init_subclass__(cls) -> None:
         super().__init_subclass__()
@@ -30,6 +30,7 @@ class EmbedderProvider(ABC, llemon.Provider):
     def embedder(
         cls,
         model: str,
+        *,
         cost_per_1m_tokens: float | None = None,
     ) -> Embedder:
         self = cls.get()
@@ -42,6 +43,12 @@ class EmbedderProvider(ABC, llemon.Provider):
             self.embedder_models[model] = llemon.Embedder(self, model, config)
         return self.embedder_models[model]
 
-    @abstractmethod
     async def embed(self, request: EmbedRequest) -> EmbedResponse:
+        request.check_supported()
+        response = llemon.EmbedResponse(request)
+        await self._embed(request, response)
+        return response
+
+    @abstractmethod
+    async def _embed(self, request: EmbedRequest, response: EmbedResponse) -> None:
         raise NotImplementedError()

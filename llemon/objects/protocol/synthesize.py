@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import llemon
 from llemon.types import NS, Timestamps, Warning
-from llemon.utils import Emoji, filtered_dict, get_extension, text_to_name
+from llemon.utils import Emoji, concat, filtered_dict, get_extension, text_to_name
 
 if TYPE_CHECKING:
     from llemon import TTS, File
@@ -45,6 +45,10 @@ class SynthesizeRequest(llemon.Request):
         return f"{synthesize}{self.text}"
 
     def check_supported(self) -> None:
+        supported_formats = self.tts.config.supports_formats or []
+        if self.output_format and self.output_format not in supported_formats:
+            supported = concat(supported_formats)
+            raise self.error(f"{self.tts} doesn't support {self.output_format} (supported formats are {supported})")
         if self.timestamps and not self.tts.config.supports_timestamps:
             warnings.warn(f"{self.tts} doesn't support timestamps", Warning)
             self.timestamps = None
